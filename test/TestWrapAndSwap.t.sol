@@ -3,10 +3,27 @@ pragma solidity ^0.8.0;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {InvoiceTokenRouter} from "../src/InvoiceTokenRouter.sol";
-import {UnsupportedProtocol} from "lib/universal-router/contracts/deploy/UnsupportedProtocol.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
+import {Constants} from "lib/v4-periphery/lib/v4-core/test/utils/Constants.sol";
+import {SortTokens} from "lib/v4-periphery/lib/v4-core/test/utils/SortTokens.sol";
+import {PoolKey} from "lib/v4-periphery/lib/v4-core/src/types/PoolKey.sol";
+import {PoolManager} from "lib/v4-periphery/lib/v4-core/src/PoolManager.sol";
+import {Currency} from "lib/v4-periphery/lib/v4-core/src/types/Currency.sol";
+import {IHooks} from "lib/v4-periphery/lib/v4-core/src/interfaces/IHooks.sol";
+import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
+import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
+import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 
 contract TestWrapAndSwap is SetupTest {
+    IPermit2 public permit2;
+    IPoolManager public poolManager;
+    IPositionManager public positionManager;
+    IStateView public stateView;
+
     InvoiceTokenRouter public invoiceTokenRouter;
+    MockERC20 public testEur;
+    MockERC20 public testBgn;
 
     function setUp() public {
         // make msg sender 0x1
@@ -19,21 +36,17 @@ contract TestWrapAndSwap is SetupTest {
         stateView = deployStateView(poolManager);
 
         // test helper contracts
-        deployTestTokens();
+        (testEur, testBgn) = deployTestTokens();
 
         // contracts under test
-        UnsupportedProtocol unsupportedProtocol = new UnsupportedProtocol();
-        invoiceTokenRouter = new InvoiceTokenRouter(
-            permit2,
-            poolManager,
-            positionManager,
-            unsupportedProtocol
-        );
+        invoiceTokenRouter = new InvoiceTokenRouter(poolManager);
     }
 
-    function testBasic() public pure {
+    function testBasic() public {
+        (Currency token0, Currency token1) = SortTokens.sort(testEur, testBgn);
+        PoolKey memory poolKey = initializePool(poolManager, token0, token1, Constants.ADDRESS_ZERO);
 
-        assertEq(uint256(1 + 1), uint256(2));
+        invoiceTokenRouter.swap(poolKey, true, 1000000000000000000, Constants.ZERO_BYTES);
 
         // 1.
         // provide ERC-3525 liquidity
@@ -49,5 +62,26 @@ contract TestWrapAndSwap is SetupTest {
         // call router swap
         // swap EUR into ERC-20
         // unwrap ERC-20 into ERC-3525
+
+        assertEq(uint256(1 + 1), uint256(2));
+    }
+
+    function initializePool(
+        IPoolManager _poolManager,
+        Currency currency0,
+        Currency currency1,
+        address hookAddress
+    ) private returns (PoolKey memory) {
+        PoolKey memory poolKey = PoolKey(
+            currency0,
+            currency1,
+            Constants.FEE_MEDIUM,
+            60, // tick spacing
+            IHooks(hookAddress)
+        );
+
+        _poolManager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
+
+        return poolKey;
     }
 }

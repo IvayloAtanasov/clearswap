@@ -1,30 +1,88 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {UniversalRouter} from "lib/universal-router/contracts/UniversalRouter.sol";
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
-import {UnsupportedProtocol} from "lib/universal-router/contracts/deploy/UnsupportedProtocol.sol";
-import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
-import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
-import {RouterParameters} from "lib/universal-router/contracts/types/RouterParameters.sol";
+import {PoolKey} from "lib/v4-periphery/lib/v4-core/src/types/PoolKey.sol";
+import {SwapParams} from "lib/v4-periphery/lib/v4-core/src/types/PoolOperation.sol";
+import {TickMath} from "lib/v4-periphery/lib/v4-core/src/libraries/TickMath.sol";
+import {BalanceDelta} from "lib/v4-periphery/lib/v4-core/src/types/BalanceDelta.sol";
+import {SwapParams} from "lib/v4-periphery/lib/v4-core/src/types/PoolOperation.sol";
 
-contract InvoiceTokenRouter is UniversalRouter {
-    constructor(
-        IPermit2 _permit2,
-        IPoolManager _poolManager,
-        IPositionManager _positionManager,
-        UnsupportedProtocol _unsupportedProtocol
-    ) UniversalRouter(
-        RouterParameters({
-            permit2: address(_permit2),
-            weth9: address(_unsupportedProtocol),
-            v2Factory: address(_unsupportedProtocol),
-            v3Factory: address(_unsupportedProtocol),
-            pairInitCodeHash: bytes32(0), // for V2
-            poolInitCodeHash: bytes32(0), // for V3
-            v4PoolManager: address(_poolManager),
-            v3NFTPositionManager: address(_unsupportedProtocol),
-            v4PositionManager: address(_positionManager)
-        })
-    ) {}
+contract InvoiceTokenRouter {
+    IPoolManager public immutable manager;
+
+    struct CallbackData {
+        address sender;
+        PoolKey poolKey;
+        SwapParams params;
+        bytes hookData;
+    }
+
+    constructor(IPoolManager _poolManager) {
+        manager = _poolManager;
+    }
+
+    function swap(
+        PoolKey memory poolKey,
+        bool zeroForOne,
+        int256 amountSpecified,
+        bytes calldata hookData
+    ) public {
+        _unlock(poolKey, zeroForOne, amountSpecified, hookData);
+    }
+
+    function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
+        require(msg.sender == address(manager));
+
+        CallbackData memory data = abi.decode(rawData, (CallbackData));
+
+        return _swap(
+            data.poolKey,
+            data.params.zeroForOne,
+            data.params.amountSpecified,
+            data.params.sqrtPriceLimitX96,
+            data.hookData
+        );
+    }
+
+    function _unlock(
+        PoolKey memory poolKey,
+        bool zeroForOne,
+        int256 amountSpecified,
+        bytes calldata hookData
+    ) private {
+        uint160 sqrtPriceLimitX96 = zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1;
+        SwapParams memory params = SwapParams(
+            zeroForOne,
+            amountSpecified,
+            sqrtPriceLimitX96
+        );
+        manager.unlock(
+            abi.encode(
+                CallbackData(msg.sender, poolKey, params, hookData)
+            )
+        );
+    }
+
+    function _swap(
+        PoolKey memory poolKey,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96,
+        bytes memory hookData
+    ) private returns (int128 reciprocalAmount) {
+        unchecked {
+            BalanceDelta delta = manager.swap(
+                poolKey,
+                SwapParams(
+                    zeroForOne,
+                    amountSpecified,
+                    sqrtPriceLimitX96
+                ),
+                hookData
+            );
+
+            reciprocalAmount = (zeroForOne == amountSpecified < 0) ? delta.amount1() : delta.amount0();
+        }
+    }
 }

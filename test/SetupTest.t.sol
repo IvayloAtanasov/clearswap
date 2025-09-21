@@ -12,24 +12,19 @@ import {IWETH9} from "lib/v4-periphery/src/interfaces/external/IWETH9.sol";
 import {IPositionDescriptor} from "lib/v4-periphery/src/interfaces/IPositionDescriptor.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 import {StateView} from "lib/v4-periphery/src/lens/StateView.sol";
-import {MockERC20} from "lib/permit2/test/mocks/MockERC20.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 contract SetupTest is Deployers {
-    IPermit2 permit2;
-    IPoolManager poolManager;
-    IPositionManager positionManager;
-    IStateView stateView;
-
     function deployPermit2() public returns (IPermit2) {
         // use precompiled code from deployer script contract
         DeployPermit2 deployer = new DeployPermit2();
-        permit2 = IPermit2(deployer.deployPermit2());
+        IPermit2 permit2 = IPermit2(deployer.deployPermit2());
 
         return permit2;
     }
 
     function deployPoolManager() public returns (IPoolManager) {
-        poolManager = new PoolManager(address(this));
+        IPoolManager poolManager = new PoolManager(address(this));
 
         return poolManager;
     }
@@ -41,7 +36,7 @@ contract SetupTest is Deployers {
         IPositionDescriptor positionDescriptor = IPositionDescriptor(address(0));
         // no native eth wrapper needed in v4
         IWETH9 weth9 = IWETH9(address(0));
-        positionManager = new PositionManager(
+        IPositionManager positionManager = new PositionManager(
             _poolManager,
             _permit2,
             unsubscribeGasLimit,
@@ -53,13 +48,18 @@ contract SetupTest is Deployers {
     }
 
     function deployStateView(IPoolManager _poolManager) public returns (IStateView) {
-        stateView = new StateView(_poolManager);
+        IStateView stateView = new StateView(_poolManager);
 
         return stateView;
     }
 
-    function deployTestTokens() public {
-        MockERC20 testToken = new MockERC20("EURT", "EURT", 18);
-        testToken.mint(address(this), 1000000000000000000000); // 1000 EURT
+    function deployTestTokens() public returns (MockERC20 testEur, MockERC20 testBgn) {
+        testEur = new MockERC20("EURT", "EURT", 18);
+        testEur.mint(address(this), 1000000000000000000000); // 1000 EURT
+
+        testBgn = new MockERC20("BGNT", "BGNT", 18);
+        testBgn.mint(address(this), 1000000000000000000000); // 1000 BGNT
+
+        return (testEur, testBgn);
     }
 }
