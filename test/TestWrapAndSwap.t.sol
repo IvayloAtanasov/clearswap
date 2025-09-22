@@ -8,7 +8,6 @@ import {Constants} from "lib/v4-periphery/lib/v4-core/test/utils/Constants.sol";
 import {SortTokens} from "lib/v4-periphery/lib/v4-core/test/utils/SortTokens.sol";
 import {PoolKey} from "lib/v4-periphery/lib/v4-core/src/types/PoolKey.sol";
 import {PoolManager} from "lib/v4-periphery/lib/v4-core/src/PoolManager.sol";
-import {Currency} from "lib/v4-periphery/lib/v4-core/src/types/Currency.sol";
 import {IHooks} from "lib/v4-periphery/lib/v4-core/src/interfaces/IHooks.sol";
 import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
@@ -22,11 +21,10 @@ contract TestWrapAndSwap is SetupTest {
     IPositionManager public positionManager;
     IStateView public stateView;
 
-    MockERC20 public testEur;
-    MockERC20 public testBgn;
+    MockERC20 public eurTestToken;
     InvoiceToken public invoiceToken;
     uint256 public slotId;
-    uint256 public tokenId;
+    uint256 public invoiceTokenId;
     InvoiceTokenRouter public invoiceTokenRouter;
 
     function setUp() public {
@@ -40,16 +38,22 @@ contract TestWrapAndSwap is SetupTest {
         stateView = deployStateView(poolManager);
 
         // test env
-        (testEur, testBgn) = deployTestTokens();
-        (invoiceToken, slotId, tokenId) = deployInvoiceToken();
+        eurTestToken = deployTestTokens();
+        (invoiceToken, slotId, invoiceTokenId) = deployInvoiceSlotAndToken();
 
         // contracts under test
-        invoiceTokenRouter = new InvoiceTokenRouter(poolManager);
+        invoiceTokenRouter = new InvoiceTokenRouter(
+            address(poolManager),
+            address(invoiceToken),
+            Constants.ADDRESS_ZERO // TODO: use hook
+        );
     }
 
     function testBasic() public {
-        (Currency token0, Currency token1) = SortTokens.sort(testEur, testBgn);
-        PoolKey memory poolKey = initializePool(poolManager, token0, token1, Constants.ADDRESS_ZERO);
+        PoolKey memory poolKey = invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
 
         invoiceTokenRouter.swap(poolKey, true, 1000000000000000000, Constants.ZERO_BYTES);
 
@@ -71,40 +75,21 @@ contract TestWrapAndSwap is SetupTest {
         assertEq(uint256(1 + 1), uint256(2));
     }
 
-    function initializePool(
-        IPoolManager _poolManager,
-        Currency currency0,
-        Currency currency1,
-        address hookAddress
-    ) private returns (PoolKey memory) {
-        PoolKey memory poolKey = PoolKey(
-            currency0,
-            currency1,
-            Constants.FEE_MEDIUM,
-            60, // tick spacing
-            IHooks(hookAddress)
-        );
-
-        _poolManager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
-
-        return poolKey;
-    }
-
-    function deployInvoiceToken() private returns (InvoiceToken, uint256, uint256) {
+    function deployInvoiceSlotAndToken() private returns (InvoiceToken, uint256, uint256) {
         InvoiceToken _invoiceToken = new InvoiceToken();
 
         uint256 dueDate = 1768867200; // 2026-01-20
         uint8 riskProfile = 2; // moderate risk
-        uint256 slotId = _invoiceToken.createSlot(dueDate, riskProfile);
+        uint256 _slotId = _invoiceToken.createSlot(dueDate, riskProfile);
 
         string memory invoiceFileCid = "bafkreigq27kupea5z4dleffwb7bw4dddwlrstrbysc7qr3lrpn4c3yjilq";
-        uint256 tokenId = _invoiceToken.mintInvoice(
+        uint256 _tokenId = _invoiceToken.mintInvoice(
             address(this),
-            slotId,
+            _slotId,
             4_380_000_000, // 4380 EUR
             invoiceFileCid
         );
 
-        return (invoiceToken, slotId, tokenId);
+        return (_invoiceToken, _slotId, _tokenId);
     }
 }

@@ -53,13 +53,10 @@ contract SetupTest is Deployers {
         return stateView;
     }
 
-    function deployTestTokens() public returns (MockERC20 testEur, MockERC20 testBgn) {
-        testEur = new MockERC20("EURT", "EURT", 18);
-        testEur.mint(address(this), 1000000000000000000000); // 1000 EURT
+    function deployTestTokens() public returns (MockERC20 testEur) {
+        testEur = new MockERC20("EURT", "EURT", 6);
+        testEur.mint(address(this), 1000000000); // 1000 EURT
 
-        testBgn = new MockERC20("BGNT", "BGNT", 18);
-        testBgn.mint(address(this), 1000000000000000000000); // 1000 BGNT
-
-        return (testEur, testBgn);
+        return testEur;
     }
 }

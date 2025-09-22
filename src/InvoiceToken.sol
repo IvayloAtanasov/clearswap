@@ -49,6 +49,11 @@ contract InvoiceToken is ERC3525, Ownable {
         return slot;
     }
 
+    function getWrapperAddress() public view returns (address) {
+        // TODO
+        return address(0);
+    }
+
     function mintInvoice(
         address to,
         uint256 slot,
