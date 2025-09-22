@@ -1,4 +1,10 @@
 {
+  "lib/erc-3525": {
+    "tag": {
+      "name": "v1.5.0",
+      "rev": "d80df770e34b0407b7e72551940f24f4334a289c"
+    }
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.10.0",

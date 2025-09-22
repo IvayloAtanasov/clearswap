@@ -14,6 +14,7 @@ import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
+import {InvoiceToken} from "../src/InvoiceToken.sol";
 
 contract TestWrapAndSwap is SetupTest {
     IPermit2 public permit2;
@@ -21,9 +22,12 @@ contract TestWrapAndSwap is SetupTest {
     IPositionManager public positionManager;
     IStateView public stateView;
 
-    InvoiceTokenRouter public invoiceTokenRouter;
     MockERC20 public testEur;
     MockERC20 public testBgn;
+    InvoiceToken public invoiceToken;
+    uint256 public slotId;
+    uint256 public tokenId;
+    InvoiceTokenRouter public invoiceTokenRouter;
 
     function setUp() public {
         // make msg sender 0x1
@@ -35,8 +39,9 @@ contract TestWrapAndSwap is SetupTest {
         positionManager = deployPositionManager(poolManager, permit2);
         stateView = deployStateView(poolManager);
 
-        // test helper contracts
+        // test env
         (testEur, testBgn) = deployTestTokens();
+        (invoiceToken, slotId, tokenId) = deployInvoiceToken();
 
         // contracts under test
         invoiceTokenRouter = new InvoiceTokenRouter(poolManager);
@@ -83,5 +88,23 @@ contract TestWrapAndSwap is SetupTest {
         _poolManager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
 
         return poolKey;
+    }
+
+    function deployInvoiceToken() private returns (InvoiceToken, uint256, uint256) {
+        InvoiceToken _invoiceToken = new InvoiceToken();
+
+        uint256 dueDate = 1768867200; // 2026-01-20
+        uint8 riskProfile = 2; // moderate risk
+        uint256 slotId = _invoiceToken.createSlot(dueDate, riskProfile);
+
+        string memory invoiceFileCid = "bafkreigq27kupea5z4dleffwb7bw4dddwlrstrbysc7qr3lrpn4c3yjilq";
+        uint256 tokenId = _invoiceToken.mintInvoice(
+            address(this),
+            slotId,
+            4_380_000_000, // 4380 EUR
+            invoiceFileCid
+        );
+
+        return (invoiceToken, slotId, tokenId);
     }
 }

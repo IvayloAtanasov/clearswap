@@ -26,3 +26,6 @@
 [submodule "lib/v3-core"]
 	path = lib/v3-core
 	url = https://github.com/Uniswap/v3-core
+[submodule "lib/erc-3525"]
+	path = lib/erc-3525
+	url = https://github.com/solv-finance/erc-3525
