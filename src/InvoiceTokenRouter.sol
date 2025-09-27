@@ -19,6 +19,10 @@ contract InvoiceTokenRouter {
     InvoiceToken public immutable invoiceToken;
     IHooks public immutable hook;
 
+    // all pools use the same fee and tick spacing for simplicity
+    uint24 public immutable poolFee = Constants.FEE_MEDIUM;
+    int24 public immutable poolTickSpacing = 60;
+
     struct CallbackData {
         address sender;
         PoolKey poolKey;
@@ -26,6 +30,7 @@ contract InvoiceTokenRouter {
         bytes hookData;
     }
 
+    // ERC3525 slot to ERC20 wrapper address
     mapping(uint256 => address) public slotToWrapper;
 
     constructor(
@@ -63,8 +68,8 @@ contract InvoiceTokenRouter {
         PoolKey memory poolKey = PoolKey(
             currency0,
             currency1,
-            Constants.FEE_MEDIUM,
-            60, // tick spacing
+            poolFee,
+            poolTickSpacing,
             hook
         );
 
@@ -73,12 +78,52 @@ contract InvoiceTokenRouter {
         return poolKey;
     }
 
+    // a regular swap, for testing regular Uniswap V4 pools
     function swap(
         PoolKey memory poolKey,
         bool zeroForOne,
         int256 amountSpecified,
         bytes calldata hookData
     ) public {
+        _unlock(poolKey, zeroForOne, amountSpecified, hookData);
+    }
+
+    // swap for invoice token pools, created by this router
+    function swapInvoice(
+        uint256 slotId,
+        address swapTokenAddress,
+        bool sellInvoice,
+        int256 amountSpecified,
+        bytes calldata hookData
+    ) public {
+        address wrapperTokenAddress = slotToWrapper[slotId];
+
+        Currency swapTokenCurrency = Currency.wrap(swapTokenAddress);
+        Currency wrapperTokenCurrency = Currency.wrap(wrapperTokenAddress);
+        (Currency currency0, Currency currency1) = Utils.sort(
+            swapTokenAddress,
+            wrapperTokenAddress
+        );
+
+        // determine zeroForOne for the pool based on trade directuon
+        bool swapTokenIsCurrency0 = swapTokenCurrency == currency0;
+        bool wrapperTokenIsCurrency0 = wrapperTokenCurrency == currency0;
+        // If selling invoice (invoice wrapper → swap token):
+        //     wrapper is currency0 → zeroForOne = true (0→1)
+        //     wrapper is currency1 → zeroForOne = false (1→0)
+        // If selling swap token (swap token → invoice wrapper):
+        //     swap token is currency0 → zeroForOne = true (0→1)
+        //     swap token is currency1 → zeroForOne = false (1→0)
+        bool zeroForOne = sellInvoice ? wrapperTokenIsCurrency0 : swapTokenIsCurrency0;
+
+        PoolKey memory poolKey = PoolKey(
+            currency0,
+            currency1,
+            poolFee,
+            poolTickSpacing,
+            hook
+        );
+
         _unlock(poolKey, zeroForOne, amountSpecified, hookData);
     }
 

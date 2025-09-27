@@ -55,7 +55,19 @@ contract TestWrapAndSwap is SetupTest {
             address(eurTestToken)
         );
 
-        invoiceTokenRouter.swap(poolKey, true, 1000000000000000000, Constants.ZERO_BYTES);
+        // invoiceTokenRouter.swap(poolKey, true, 1000000000000000000, Constants.ZERO_BYTES);
+
+        // spend invoice tokens, get EURT
+        bool zeroForOne = true;
+        int256 amountSpecified = 10_000_000; // 10 EURT
+        bytes memory hookData = Constants.ZERO_BYTES;
+        invoiceTokenRouter.swapInvoice(
+            slotId,
+            address(eurTestToken),
+            zeroForOne,
+            amountSpecified,
+            hookData
+        );
 
         // 1.
         // provide ERC-3525 liquidity
