@@ -39,9 +39,10 @@ remappings = [
 solc_version = "0.8.26"
 evm_version = "cancun"
 ffi = true
-# lib/universal-router/contracts/modules/uniswap/v2/V2SwapRouter.sol:39:24 requires compilation with this option
-via_ir = true
-optimizer = true
-optimizer_runs = 200
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# lib/universal-router/contracts/modules/uniswap/v2/V2SwapRouter.sol:39:24 requires compilation with this option
+# via_ir = true
+# optimizer = true
+# optimizer_runs = 200
