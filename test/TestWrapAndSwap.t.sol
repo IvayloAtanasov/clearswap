@@ -14,6 +14,7 @@ import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolMan
 import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 import {InvoiceToken} from "../src/InvoiceToken.sol";
+import "forge-std/console.sol";
 
 contract TestWrapAndSwap is SetupTest {
     IPermit2 public permit2;
@@ -49,15 +50,36 @@ contract TestWrapAndSwap is SetupTest {
         );
     }
 
-    function testBasic() public {
+    function testInitialize() public {
         PoolKey memory poolKey = invoiceTokenRouter.initializeInvoicePool(
             slotId,
             address(eurTestToken)
         );
 
-        // invoiceTokenRouter.swap(poolKey, true, 1000000000000000000, Constants.ZERO_BYTES);
+        uint256 eurBalanceBefore = eurTestToken.balanceOf(address(0x1));
+        uint256 invoiceBalanceBefore = invoiceToken.balanceOfSlot(address(0x1), slotId);
 
-        // spend invoice tokens, get EURT
+        // smoke test with regular swap
+        invoiceTokenRouter.swap(poolKey, true, 10_000_000, Constants.ZERO_BYTES);
+
+        uint256 eurBalanceAfterSwap = eurTestToken.balanceOf(address(0x1));
+        uint256 invoiceBalanceAfterSwap = invoiceToken.balanceOfSlot(address(0x1), slotId);
+
+        // no liquidity, no swap change, no error either
+        assertEq(eurBalanceAfterSwap, eurBalanceBefore);
+        assertEq(invoiceBalanceAfterSwap, invoiceBalanceBefore);
+    }
+
+    function testSwapNoLiquidity() public {
+        invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
+
+        uint256 eurBalanceBefore = eurTestToken.balanceOf(address(0x1));
+        uint256 invoiceBalanceBefore = invoiceToken.balanceOfSlot(address(0x1), slotId);
+
+        // try to spend invoice tokens, get EURT
         bool zeroForOne = true;
         int256 amountSpecified = 10_000_000; // 10 EURT
         bytes memory hookData = Constants.ZERO_BYTES;
@@ -69,22 +91,134 @@ contract TestWrapAndSwap is SetupTest {
             hookData
         );
 
-        // 1.
-        // provide ERC-3525 liquidity
-        // wrap ERC-3525 into ERC-20
-        // add into pool with ERC-20/EURC
+        uint256 eurBalanceAfterSwap = eurTestToken.balanceOf(address(0x1));
+        uint256 invoiceBalanceAfterSwap = invoiceToken.balanceOfSlot(address(0x1), slotId);
 
-        // 2.
-        // call router swap
-        // wrap ERC-3525 into ERC-20
-        // swap ERC-20 into EURC
+        // no liquidity, no swap change, no error either
+        assertEq(eurBalanceAfterSwap, eurBalanceBefore);
+        assertEq(invoiceBalanceAfterSwap, invoiceBalanceBefore);
+    }
 
-        // 3.
-        // call router swap
-        // swap EUR into ERC-20
-        // unwrap ERC-20 into ERC-3525
+    // 1.
+    // provide ERC-3525 liquidity
+    // wrap ERC-3525 into ERC-20
+    // add into pool with ERC-20/EURC
 
-        assertEq(uint256(1 + 1), uint256(2));
+    // 2.
+    // call router swap
+    // wrap ERC-3525 into ERC-20
+    // swap ERC-20 into EURC
+
+    // 3.
+    // call router swap
+    // swap EUR into ERC-20
+    // unwrap ERC-20 into ERC-3525
+
+    // function testProvideLiquidity() public {
+    //     // 1. Initialize the pool between invoice wrapper and EUR token
+    //     PoolKey memory poolKey = invoiceTokenRouter.initializeInvoicePool(
+    //         slotId,
+    //         address(eurTestToken)
+    //     );
+
+    //     // 2. Mint some invoice tokens and EUR tokens to address(0x1)
+    //     uint256 invoiceAmount = 1_000_000e18;
+    //     uint256 eurAmount = 1_000_000e18;
+    //     invoiceToken.mintInvoice(address(0x1), slotId, invoiceAmount, "");
+    //     eurTestToken.mint(address(0x1), eurAmount);
+
+    //     // 3. Approve the router to spend invoice tokens and EUR tokens
+    //     vm.prank(address(0x1));
+    //     invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+    //     vm.prank(address(0x1));
+    //     eurTestToken.approve(address(invoiceTokenRouter), eurAmount);
+
+    //     // 4. Provide liquidity to the pool
+    //     // Assume the router has a function to add liquidity, e.g. addLiquidity
+    //     // If not, this is a placeholder for the actual liquidity provision logic
+    //     uint256 liquidityInvoiceAmount = 100_000e18;
+    //     uint256 liquidityEurAmount = 100_000e18;
+    //     vm.prank(address(0x1));
+    //     invoiceTokenRouter.addLiquidity(
+    //         poolKey,
+    //         liquidityInvoiceAmount,
+    //         liquidityEurAmount,
+    //         address(0x1)
+    //     );
+
+    //     // 5. Check pool balances or LP token balances (if applicable)
+    //     // This is a placeholder; actual checks depend on implementation
+    //     // For example, check that address(0x1) received LP tokens or pool state updated
+
+    //     assertEq(uint256(1 + 1), uint256(2), "Sanity check after providing liquidity");
+    // }
+
+    function testRemoveLiquidity() public {
+        // TODO:
+    }
+
+    // function testSellInvoiceForToken() public {
+    //     // 1. Initialize the pool between invoice wrapper and EUR token
+    //     invoiceTokenRouter.initializeInvoicePool(
+    //         slotId,
+    //         address(eurTestToken)
+    //     );
+
+    //     // TODO: provide liquidity
+
+    //     // 2. Get initial balances
+    //     uint256 initialEurBalance = eurTestToken.balanceOf(address(0x1));
+    //     uint256 initialInvoiceBalance = invoiceToken.balanceOfSlot(address(0x1), slotId);
+
+    //     console.log("Initial EUR balance:", initialEurBalance);
+    //     console.log("Initial invoice balance:", initialInvoiceBalance);
+
+    //     // 3. Approve the router to spend our invoice tokens (if needed)
+    //     invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+
+    //     // TODO: approval for the 3525 token to be spend (locked) in the router?
+    //     // TODO: router then mints the wrapper token
+    //     //      - router spends the wrapper token
+
+    //     // 4. Execute the swap: sell invoice for EUR tokens
+    //     bool sellInvoice = true; // We're selling invoice tokens
+    //     int256 amountSpecified = 1000e18; // Amount of invoice tokens to sell
+    //     bytes memory hookData = Constants.ZERO_BYTES;
+
+    //     // Call the swap function
+    //     invoiceTokenRouter.swapInvoice(
+    //         slotId,
+    //         address(eurTestToken),
+    //         sellInvoice,
+    //         amountSpecified,
+    //         hookData
+    //     );
+
+    //     // 5. Check balances after swap
+    //     uint256 finalEurBalance = eurTestToken.balanceOf(address(0x1));
+    //     uint256 finalInvoiceBalance = invoiceToken.balanceOfSlot(address(0x1), slotId);
+
+    //     console.log("Final EUR balance:", finalEurBalance);
+    //     console.log("Final invoice balance:", finalInvoiceBalance);
+
+    //     // 6. Assertions
+    //     assertGt(finalEurBalance, initialEurBalance, "Should have received EUR tokens");
+    //     assertLt(finalInvoiceBalance, initialInvoiceBalance, "Should have spent invoice tokens");
+
+    //     // 7. Check the difference matches expected amounts (accounting for fees)
+    //     uint256 eurReceived = finalEurBalance - initialEurBalance;
+    //     uint256 invoiceSpent = initialInvoiceBalance - finalInvoiceBalance;
+
+    //     assertGt(eurReceived, 0, "Should have received some EUR");
+    //     assertGt(invoiceSpent, 0, "Should have spent some invoice tokens");
+
+    //     console.log("EUR received:", eurReceived);
+    //     console.log("Invoice tokens spent:", invoiceSpent);
+    // }
+
+    function testSellTokenForInvoice() public {
+        // TODO:
+        // TODO: approval for the swap token to be spend by the rotuer
     }
 
     function deployInvoiceSlotAndToken() private returns (InvoiceToken, uint256, uint256) {
@@ -96,7 +230,7 @@ contract TestWrapAndSwap is SetupTest {
 
         string memory invoiceFileCid = "bafkreigq27kupea5z4dleffwb7bw4dddwlrstrbysc7qr3lrpn4c3yjilq";
         uint256 _tokenId = _invoiceToken.mintInvoice(
-            address(this),
+            address(0x1),
             _slotId,
             4_380_000_000, // 4380 EUR
             invoiceFileCid

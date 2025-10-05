@@ -78,14 +78,23 @@ contract InvoiceTokenRouter {
         return poolKey;
     }
 
-    // a regular swap, for testing regular Uniswap V4 pools
-    function swap(
-        PoolKey memory poolKey,
-        bool zeroForOne,
-        int256 amountSpecified,
+    function addLiquidity(
+        uint256 slotId,
+        address swapTokenAddress,
+        uint256 invoiceTokenAmount,
+        uint256 swapTokenAmount,
         bytes calldata hookData
     ) public {
-        _unlock(poolKey, zeroForOne, amountSpecified, hookData);
+        // use position manager
+    }
+
+    function removeLiquidity(
+        uint256 slotId,
+        address swapTokenAddress,
+        uint256 amount,
+        bytes calldata hookData
+    ) public {
+        // TODO:
     }
 
     // swap for invoice token pools, created by this router
@@ -97,6 +106,12 @@ contract InvoiceTokenRouter {
         bytes calldata hookData
     ) public {
         address wrapperTokenAddress = slotToWrapper[slotId];
+
+        // Check that the wrapper token exists for the given slot
+        require(
+            wrapperTokenAddress != address(0),
+            "InvoiceTokenRouter: Wrapper not initialized for slot"
+        );
 
         Currency swapTokenCurrency = Currency.wrap(swapTokenAddress);
         Currency wrapperTokenCurrency = Currency.wrap(wrapperTokenAddress);
@@ -127,6 +142,16 @@ contract InvoiceTokenRouter {
         _unlock(poolKey, zeroForOne, amountSpecified, hookData);
     }
 
+    // a regular swap, for testing regular Uniswap V4 pools
+    function swap(
+        PoolKey memory poolKey,
+        bool zeroForOne,
+        int256 amountSpecified,
+        bytes calldata hookData
+    ) public {
+        _unlock(poolKey, zeroForOne, amountSpecified, hookData);
+    }
+
     function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
         require(msg.sender == address(manager));
 
@@ -147,7 +172,9 @@ contract InvoiceTokenRouter {
         int256 amountSpecified,
         bytes calldata hookData
     ) private {
-        uint160 sqrtPriceLimitX96 = zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1;
+        // TODO: should be configurable
+        uint160 priceBuffer = 1000;
+        uint160 sqrtPriceLimitX96 = zeroForOne ? TickMath.MIN_SQRT_PRICE + priceBuffer : TickMath.MAX_SQRT_PRICE - priceBuffer;
         SwapParams memory params = SwapParams(
             zeroForOne,
             amountSpecified,

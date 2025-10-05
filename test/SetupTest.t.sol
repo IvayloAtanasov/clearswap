@@ -55,7 +55,7 @@ contract SetupTest is Deployers {
 
     function deployTestTokens() public returns (MockERC20 testEur) {
         testEur = new MockERC20("EURT", "EURT", 6);
-        testEur.mint(address(this), 1000000000); // 1000 EURT
+        testEur.mint(address(0x1), 1000000000); // 1000 EURT
 
         return testEur;
     }

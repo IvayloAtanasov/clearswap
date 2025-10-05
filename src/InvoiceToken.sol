@@ -49,7 +49,7 @@ contract InvoiceToken is ERC3525, Ownable {
         return slot;
     }
 
-    function getWrapperAddress() public view returns (address) {
+    function getWrapperAddress() public pure returns (address) {
         // TODO
         return address(0);
     }
@@ -84,5 +84,18 @@ contract InvoiceToken is ERC3525, Ownable {
         require(bytes(ipfsCid).length > 0, "No IPFS CID for token");
 
         return string(abi.encodePacked("ipfs://", ipfsCid));
+    }
+
+    function balanceOfSlot(address owner, uint256 slot) external view returns (uint256 totalValue) {
+        uint256 tokenCount = balanceOf(owner); // Number of tokens
+
+        for (uint256 i = 0; i < tokenCount; i++) {
+            uint256 tokenId = tokenOfOwnerByIndex(owner, i);
+            if (slotOf(tokenId) == slot) {
+                totalValue += balanceOf(tokenId); // Token value
+            }
+        }
+
+        return totalValue;
     }
 }
