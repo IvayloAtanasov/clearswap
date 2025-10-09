@@ -2,6 +2,11 @@
 pragma solidity ^0.8.0;
 
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
+import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
+import {Actions} from "lib/v4-periphery/src/libraries/Actions.sol";
+import {LiquidityAmounts} from "lib/v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {ModifyLiquidityParams} from "lib/v4-periphery/lib/v4-core/src/types/PoolOperation.sol";
 import {PoolKey} from "lib/v4-periphery/lib/v4-core/src/types/PoolKey.sol";
 import {SwapParams} from "lib/v4-periphery/lib/v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "lib/v4-periphery/lib/v4-core/src/libraries/TickMath.sol";
@@ -15,7 +20,9 @@ import {InvoiceTokenWrapper} from "./InvoiceTokenWrapper.sol";
 import {Utils} from "./Utils.sol";
 
 contract InvoiceTokenRouter {
-    IPoolManager public immutable manager;
+    IPoolManager public immutable poolManager;
+    IPositionManager public immutable positionManager;
+    IStateView public immutable stateView;
     InvoiceToken public immutable invoiceToken;
     IHooks public immutable hook;
 
@@ -35,10 +42,14 @@ contract InvoiceTokenRouter {
 
     constructor(
         address poolManagerAddress,
+        address positionManagerAddress,
+        address stateViewAddress,
         address invoiceTokenAddress,
         address hookAddress
     ) {
-        manager = IPoolManager(poolManagerAddress);
+        poolManager = IPoolManager(poolManagerAddress);
+        positionManager = IPositionManager(positionManagerAddress);
+        stateView = IStateView(stateViewAddress);
         invoiceToken = InvoiceToken(invoiceTokenAddress); // TODO: use interface
         hook = IHooks(hookAddress);
     }
@@ -73,7 +84,7 @@ contract InvoiceTokenRouter {
             hook
         );
 
-        manager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
+        poolManager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
 
         return poolKey;
     }
@@ -85,7 +96,59 @@ contract InvoiceTokenRouter {
         uint256 swapTokenAmount,
         bytes calldata hookData
     ) public {
-        // use position manager
+        // build pool key
+        PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
+
+        // 1. ACTIONS
+        bytes memory actions = abi.encodePacked(
+            Actions.MINT_POSITION,
+            Actions.SETTLE_PAIR
+        );
+
+        // 2. ACTIONS PARAMS
+        bytes[] memory params = new bytes[](2);
+
+        // 2.1. Parameters for MINT_POSITION
+        (uint160 sqrtPriceX96,,,) = stateView.getSlot0(poolKey.toId());
+        (int24 tickLower, int24 tickUpper) = adjustTicks(TickMath.MIN_TICK, TickMath.MAX_TICK, poolKey.tickSpacing);
+        uint256 amount0Max = Currency.unwrap(poolKey.currency0) == swapTokenAddress ? swapTokenAmount : invoiceTokenAmount;
+        uint256 amount1Max = Currency.unwrap(poolKey.currency1) == swapTokenAddress ? swapTokenAmount : invoiceTokenAmount;
+
+        uint256 liquidity = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96,
+            TickMath.getSqrtPriceAtTick(tickLower),
+            TickMath.getSqrtPriceAtTick(tickUpper),
+            amount0Max,
+            amount1Max
+        );
+
+        params[0] = abi.encode(
+            poolKey,
+            tickLower,
+            tickUpper,
+            liquidity,    // Amount of liquidity to mint
+            amount0Max,   // Maximum amount of token0 to use
+            amount1Max,   // Maximum amount of token1 to use
+            msg.sender,   // Who receives the NFT
+            hookData
+        );
+
+        // 2.2. Parameters for SETTLE_PAIR - specify tokens to provide
+        params[1] = abi.encode(
+            Currency.unwrap(poolKey.currency0),
+            Currency.unwrap(poolKey.currency1)
+        );
+
+        // ENCODE COMMANDS
+        bytes memory unlockData = abi.encode(
+            actions,
+            params
+        );
+        // EXECUTE
+        positionManager.modifyLiquidities(
+            unlockData,
+            block.timestamp + 60  // 60 second deadline
+        );
     }
 
     function removeLiquidity(
@@ -113,16 +176,14 @@ contract InvoiceTokenRouter {
             "InvoiceTokenRouter: Wrapper not initialized for slot"
         );
 
+        PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
+
         Currency swapTokenCurrency = Currency.wrap(swapTokenAddress);
         Currency wrapperTokenCurrency = Currency.wrap(wrapperTokenAddress);
-        (Currency currency0, Currency currency1) = Utils.sort(
-            swapTokenAddress,
-            wrapperTokenAddress
-        );
 
         // determine zeroForOne for the pool based on trade directuon
-        bool swapTokenIsCurrency0 = swapTokenCurrency == currency0;
-        bool wrapperTokenIsCurrency0 = wrapperTokenCurrency == currency0;
+        bool swapTokenIsCurrency0 = swapTokenCurrency == poolKey.currency0;
+        bool wrapperTokenIsCurrency0 = wrapperTokenCurrency == poolKey.currency0;
         // If selling invoice (invoice wrapper → swap token):
         //     wrapper is currency0 → zeroForOne = true (0→1)
         //     wrapper is currency1 → zeroForOne = false (1→0)
@@ -130,14 +191,6 @@ contract InvoiceTokenRouter {
         //     swap token is currency0 → zeroForOne = true (0→1)
         //     swap token is currency1 → zeroForOne = false (1→0)
         bool zeroForOne = sellInvoice ? wrapperTokenIsCurrency0 : swapTokenIsCurrency0;
-
-        PoolKey memory poolKey = PoolKey(
-            currency0,
-            currency1,
-            poolFee,
-            poolTickSpacing,
-            hook
-        );
 
         _unlock(poolKey, zeroForOne, amountSpecified, hookData);
     }
@@ -153,7 +206,7 @@ contract InvoiceTokenRouter {
     }
 
     function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
-        require(msg.sender == address(manager));
+        require(msg.sender == address(poolManager));
 
         CallbackData memory data = abi.decode(rawData, (CallbackData));
 
@@ -164,6 +217,36 @@ contract InvoiceTokenRouter {
             data.params.sqrtPriceLimitX96,
             data.hookData
         );
+
+        // TODO: settle invoce tokens from/to router
+    }
+
+    function _buildPoolKeyFromSlotAndSwapToken(
+        uint256 slotId,
+        address swapTokenAddress
+    ) private view returns (PoolKey memory) {
+        address wrapperTokenAddress = slotToWrapper[slotId];
+
+        // Check that the wrapper token exists for the given slot
+        require(
+            wrapperTokenAddress != address(0),
+            "InvoiceTokenRouter: Wrapper not initialized for slot"
+        );
+
+        (Currency currency0, Currency currency1) = Utils.sort(
+            swapTokenAddress,
+            wrapperTokenAddress
+        );
+
+        PoolKey memory poolKey = PoolKey(
+            currency0,
+            currency1,
+            poolFee,
+            poolTickSpacing,
+            hook
+        );
+
+        return poolKey;
     }
 
     function _unlock(
@@ -180,7 +263,7 @@ contract InvoiceTokenRouter {
             amountSpecified,
             sqrtPriceLimitX96
         );
-        manager.unlock(
+        poolManager.unlock(
             abi.encode(
                 CallbackData(msg.sender, poolKey, params, hookData)
             )
@@ -195,7 +278,7 @@ contract InvoiceTokenRouter {
         bytes memory hookData
     ) private returns (int128 reciprocalAmount) {
         unchecked {
-            BalanceDelta delta = manager.swap(
+            BalanceDelta delta = poolManager.swap(
                 poolKey,
                 SwapParams(
                     zeroForOne,
@@ -206,6 +289,35 @@ contract InvoiceTokenRouter {
             );
 
             reciprocalAmount = (zeroForOne == amountSpecified < 0) ? delta.amount1() : delta.amount0();
+        }
+    }
+
+    /// @notice Adjusts ticks to the nearest multiples of tickSpacing.
+    /// @dev Returns the adjusted lower and upper ticks.
+    /// @param tickLower The lower tick (can be negative).
+    /// @param tickUpper The upper tick (can be negative).
+    /// @param tickSpacing The tick spacing (must be positive).
+    /// @return tickLowerAdjusted The lower tick, rounded up to the nearest multiple of tickSpacing.
+    /// @return tickUpperAdjusted The upper tick, rounded down to the nearest multiple of tickSpacing.
+    function adjustTicks(int24 tickLower, int24 tickUpper, int24 tickSpacing) internal pure returns (int24 tickLowerAdjusted, int24 tickUpperAdjusted) {
+        require(tickSpacing > 0, "tickSpacing must be positive");
+
+        // Round up tickLower to the nearest multiple of tickSpacing
+        if (tickLower % tickSpacing == 0) {
+            tickLowerAdjusted = tickLower;
+        } else if (tickLower > 0) {
+            tickLowerAdjusted = ((tickLower + tickSpacing - 1) / tickSpacing) * tickSpacing;
+        } else {
+            tickLowerAdjusted = (tickLower / tickSpacing) * tickSpacing;
+        }
+
+        // Round down tickUpper to the nearest multiple of tickSpacing
+        if (tickUpper % tickSpacing == 0) {
+            tickUpperAdjusted = tickUpper;
+        } else if (tickUpper > 0) {
+            tickUpperAdjusted = (tickUpper / tickSpacing) * tickSpacing;
+        } else {
+            tickUpperAdjusted = ((tickUpper - tickSpacing + 1) / tickSpacing) * tickSpacing;
         }
     }
 }

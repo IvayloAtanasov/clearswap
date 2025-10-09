@@ -28,6 +28,8 @@ contract TestWrapAndSwap is SetupTest {
     uint256 public invoiceTokenId;
     InvoiceTokenRouter public invoiceTokenRouter;
 
+    uint256 public eurAmountOwned = 1000000000; // 1000 EURT
+
     function setUp() public {
         // make msg sender 0x1
         vm.startPrank(address(0x1));
@@ -39,12 +41,14 @@ contract TestWrapAndSwap is SetupTest {
         stateView = deployStateView(poolManager);
 
         // test env
-        eurTestToken = deployTestTokens();
-        (invoiceToken, slotId, invoiceTokenId) = deployInvoiceSlotAndToken();
+        eurTestToken = deployTestTokens(address(0x1), eurAmountOwned);
+        (invoiceToken, slotId, invoiceTokenId) = deployInvoiceSlotAndToken(address(0x1));
 
         // contracts under test
         invoiceTokenRouter = new InvoiceTokenRouter(
             address(poolManager),
+            address(positionManager),
+            address(stateView),
             address(invoiceToken),
             Constants.ADDRESS_ZERO // TODO: use hook
         );
@@ -99,6 +103,35 @@ contract TestWrapAndSwap is SetupTest {
         assertEq(invoiceBalanceAfterSwap, invoiceBalanceBefore);
     }
 
+    function testProvideLiquidity() public {
+        // 1. Initialize the pool between invoice wrapper and EUR token
+        invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
+
+        // TODO: use Permit2?
+        // 2. Approve the router to spend invoice tokens and EUR tokens
+        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+        eurTestToken.approve(address(invoiceTokenRouter), eurAmountOwned);
+
+        // 3. Provide liquidity to the pool
+        // add all invoice tokens owned for that much eur in 1:1 ratio
+        invoiceTokenRouter.addLiquidity(
+            slotId,
+            address(eurTestToken),
+            4_380_000_000,
+            4_380_000_000,
+            Constants.ZERO_BYTES
+        );
+
+        // 4. Check pool balances or LP token balances (if applicable)
+        // This is a placeholder; actual checks depend on implementation
+        // For example, check that address(0x1) received LP tokens or pool state updated
+
+        assertEq(uint256(1 + 1), uint256(2), "Sanity check after providing liquidity");
+    }
+
     // 1.
     // provide ERC-3525 liquidity
     // wrap ERC-3525 into ERC-20
@@ -114,44 +147,6 @@ contract TestWrapAndSwap is SetupTest {
     // swap EUR into ERC-20
     // unwrap ERC-20 into ERC-3525
 
-    // function testProvideLiquidity() public {
-    //     // 1. Initialize the pool between invoice wrapper and EUR token
-    //     PoolKey memory poolKey = invoiceTokenRouter.initializeInvoicePool(
-    //         slotId,
-    //         address(eurTestToken)
-    //     );
-
-    //     // 2. Mint some invoice tokens and EUR tokens to address(0x1)
-    //     uint256 invoiceAmount = 1_000_000e18;
-    //     uint256 eurAmount = 1_000_000e18;
-    //     invoiceToken.mintInvoice(address(0x1), slotId, invoiceAmount, "");
-    //     eurTestToken.mint(address(0x1), eurAmount);
-
-    //     // 3. Approve the router to spend invoice tokens and EUR tokens
-    //     vm.prank(address(0x1));
-    //     invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
-    //     vm.prank(address(0x1));
-    //     eurTestToken.approve(address(invoiceTokenRouter), eurAmount);
-
-    //     // 4. Provide liquidity to the pool
-    //     // Assume the router has a function to add liquidity, e.g. addLiquidity
-    //     // If not, this is a placeholder for the actual liquidity provision logic
-    //     uint256 liquidityInvoiceAmount = 100_000e18;
-    //     uint256 liquidityEurAmount = 100_000e18;
-    //     vm.prank(address(0x1));
-    //     invoiceTokenRouter.addLiquidity(
-    //         poolKey,
-    //         liquidityInvoiceAmount,
-    //         liquidityEurAmount,
-    //         address(0x1)
-    //     );
-
-    //     // 5. Check pool balances or LP token balances (if applicable)
-    //     // This is a placeholder; actual checks depend on implementation
-    //     // For example, check that address(0x1) received LP tokens or pool state updated
-
-    //     assertEq(uint256(1 + 1), uint256(2), "Sanity check after providing liquidity");
-    // }
 
     function testRemoveLiquidity() public {
         // TODO:
@@ -221,7 +216,7 @@ contract TestWrapAndSwap is SetupTest {
         // TODO: approval for the swap token to be spend by the rotuer
     }
 
-    function deployInvoiceSlotAndToken() private returns (InvoiceToken, uint256, uint256) {
+    function deployInvoiceSlotAndToken(address mintAddress) private returns (InvoiceToken, uint256, uint256) {
         InvoiceToken _invoiceToken = new InvoiceToken();
 
         uint256 dueDate = 1768867200; // 2026-01-20
@@ -230,7 +225,7 @@ contract TestWrapAndSwap is SetupTest {
 
         string memory invoiceFileCid = "bafkreigq27kupea5z4dleffwb7bw4dddwlrstrbysc7qr3lrpn4c3yjilq";
         uint256 _tokenId = _invoiceToken.mintInvoice(
-            address(0x1),
+            mintAddress,
             _slotId,
             4_380_000_000, // 4380 EUR
             invoiceFileCid
