@@ -110,10 +110,9 @@ contract TestWrapAndSwap is SetupTest {
             address(eurTestToken)
         );
 
-        // TODO: use Permit2?
         // 2. Approve the router to spend invoice tokens and EUR tokens
-        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
-        eurTestToken.approve(address(invoiceTokenRouter), eurAmountOwned);
+        invoiceToken.setApprovalForAll(address(permit2), true);
+        eurTestToken.approve(address(permit2), eurAmountOwned);
 
         // 3. Provide liquidity to the pool
         // add all invoice tokens owned for that much eur in 1:1 ratio

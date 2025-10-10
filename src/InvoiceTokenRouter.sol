@@ -100,9 +100,15 @@ contract InvoiceTokenRouter {
         PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
 
         // 1. ACTIONS
+        // Note: actions conversion to 1 byte is missing from docs
+        // https://docs.uniswap.org/contracts/v4/guides/position-manager
+        // but can be found in the tests
+        // https://github.com/Uniswap/v4-periphery/blob/main/test/shared/Planner.sol#L32
+        // and in this implementation
+        // https://github.com/ScoutiFi-xyz/blockchain/blob/main/deploy/local/03-swap.ts#L106-L109
         bytes memory actions = abi.encodePacked(
-            Actions.MINT_POSITION,
-            Actions.SETTLE_PAIR
+            uint8(Actions.MINT_POSITION),
+            uint8(Actions.SETTLE_PAIR)
         );
 
         // 2. ACTIONS PARAMS
@@ -135,8 +141,8 @@ contract InvoiceTokenRouter {
 
         // 2.2. Parameters for SETTLE_PAIR - specify tokens to provide
         params[1] = abi.encode(
-            Currency.unwrap(poolKey.currency0),
-            Currency.unwrap(poolKey.currency1)
+            poolKey.currency0,
+            poolKey.currency1
         );
 
         // ENCODE COMMANDS
