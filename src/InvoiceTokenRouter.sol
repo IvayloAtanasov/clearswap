@@ -66,7 +66,8 @@ contract InvoiceTokenRouter {
             InvoiceTokenWrapper invoiceTokenWrapper = new InvoiceTokenWrapper(
                 "Invoice Token Wrapper",
                 slotWrapperName,
-                6
+                6,
+                address(this)
             );
             slotToWrapper[slotId] = address(invoiceTokenWrapper);
         }
@@ -89,13 +90,29 @@ contract InvoiceTokenRouter {
         return poolKey;
     }
 
+    function getWrapperAddress(uint256 tokenId) public view returns (address) {
+        uint256 slot = invoiceToken.slotOf(tokenId);
+        return slotToWrapper[slot];
+    }
+
     function addLiquidity(
-        uint256 slotId,
+        uint256 tokenId,
         address swapTokenAddress,
         uint256 invoiceTokenAmount,
         uint256 swapTokenAmount,
         bytes calldata hookData
     ) public {
+        uint256 slotId = invoiceToken.slotOf(tokenId);
+        require(
+            slotToWrapper[slotId] != Constants.ADDRESS_ZERO,
+            "InvoiceTokenRouter: Wrapper not initialized for slot"
+        );
+
+        // lock invoice tokens in router for wrapper tokens
+        invoiceToken.transferFrom(tokenId, address(this), invoiceTokenAmount);
+        InvoiceTokenWrapper wrapperToken = InvoiceTokenWrapper(slotToWrapper[slotId]);
+        wrapperToken.mint(msg.sender, invoiceTokenAmount);
+
         // build pool key
         PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
 
@@ -235,7 +252,7 @@ contract InvoiceTokenRouter {
 
         // Check that the wrapper token exists for the given slot
         require(
-            wrapperTokenAddress != address(0),
+            wrapperTokenAddress != Constants.ADDRESS_ZERO,
             "InvoiceTokenRouter: Wrapper not initialized for slot"
         );
 
@@ -305,7 +322,11 @@ contract InvoiceTokenRouter {
     /// @param tickSpacing The tick spacing (must be positive).
     /// @return tickLowerAdjusted The lower tick, rounded up to the nearest multiple of tickSpacing.
     /// @return tickUpperAdjusted The upper tick, rounded down to the nearest multiple of tickSpacing.
-    function adjustTicks(int24 tickLower, int24 tickUpper, int24 tickSpacing) internal pure returns (int24 tickLowerAdjusted, int24 tickUpperAdjusted) {
+    function adjustTicks(
+        int24 tickLower,
+        int24 tickUpper,
+        int24 tickSpacing
+    ) internal pure returns (int24 tickLowerAdjusted, int24 tickUpperAdjusted) {
         require(tickSpacing > 0, "tickSpacing must be positive");
 
         // Round up tickLower to the nearest multiple of tickSpacing

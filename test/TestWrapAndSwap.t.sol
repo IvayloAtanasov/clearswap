@@ -14,6 +14,7 @@ import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolMan
 import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 import {InvoiceToken} from "../src/InvoiceToken.sol";
+import {InvoiceTokenWrapper} from "../src/InvoiceTokenWrapper.sol";
 import "forge-std/console.sol";
 
 contract TestWrapAndSwap is SetupTest {
@@ -104,29 +105,46 @@ contract TestWrapAndSwap is SetupTest {
     }
 
     function testProvideLiquidity() public {
-        // 1. Initialize the pool between invoice wrapper and EUR token
+        // Initialize the pool between invoice wrapper and EUR token
         invoiceTokenRouter.initializeInvoicePool(
             slotId,
             address(eurTestToken)
         );
 
-        // 2. Approve the router to spend invoice tokens and EUR tokens
-        invoiceToken.setApprovalForAll(address(permit2), true);
-        eurTestToken.approve(address(permit2), eurAmountOwned);
+        address invoiceTokenWrapperAddress = invoiceTokenRouter.getWrapperAddress(invoiceTokenId);
+        InvoiceTokenWrapper invoiceTokenWrapper = InvoiceTokenWrapper(invoiceTokenWrapperAddress);
 
-        // 3. Provide liquidity to the pool
+        // Approvals
+        // - router as spender for tester 3525 invoice tokens
+        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+        // - permit2 as spender for tester ERC20 pair
+        eurTestToken.approve(address(permit2), 4_380_000_000);
+        invoiceTokenWrapper.approve(address(permit2), 4_380_000_000);
+        // - position manager as spender for permit2 ERC20 pair (provide/remove liquidity)
+        permit2.approve(
+            address(eurTestToken),
+            address(positionManager),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
+        permit2.approve(
+            invoiceTokenWrapperAddress,
+            address(positionManager),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
+
+        // Provide liquidity to the pool
         // add all invoice tokens owned for that much eur in 1:1 ratio
         invoiceTokenRouter.addLiquidity(
-            slotId,
+            invoiceTokenId,
             address(eurTestToken),
             4_380_000_000,
             4_380_000_000,
             Constants.ZERO_BYTES
         );
 
-        // 4. Check pool balances or LP token balances (if applicable)
-        // This is a placeholder; actual checks depend on implementation
-        // For example, check that address(0x1) received LP tokens or pool state updated
+        // Check pool balances or LP token balances
 
         assertEq(uint256(1 + 1), uint256(2), "Sanity check after providing liquidity");
     }
