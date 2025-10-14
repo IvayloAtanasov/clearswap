@@ -16,10 +16,12 @@ import {Constants} from "lib/v4-periphery/lib/v4-core/test/utils/Constants.sol";
 import {IHooks} from "lib/v4-periphery/lib/v4-core/src/interfaces/IHooks.sol";
 import {InvoiceToken} from "./InvoiceToken.sol";
 import {Strings} from "lib/openzeppelin-contracts/contracts/utils/Strings.sol";
+import {ERC165} from "lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol";
 import {InvoiceTokenWrapper} from "./InvoiceTokenWrapper.sol";
 import {Utils} from "./Utils.sol";
+import {IERC3525Receiver} from "lib/erc-3525/contracts/IERC3525Receiver.sol";
 
-contract InvoiceTokenRouter {
+contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     IPoolManager public immutable poolManager;
     IPositionManager public immutable positionManager;
     IStateView public immutable stateView;
@@ -168,10 +170,11 @@ contract InvoiceTokenRouter {
             params
         );
         // EXECUTE
-        positionManager.modifyLiquidities(
-            unlockData,
-            block.timestamp + 60  // 60 second deadline
-        );
+        // TODO: allowance expired?
+        // positionManager.modifyLiquidities(
+        //     unlockData,
+        //     block.timestamp + 60  // 60 second deadline
+        // );
     }
 
     function removeLiquidity(
@@ -242,6 +245,24 @@ contract InvoiceTokenRouter {
         );
 
         // TODO: settle invoce tokens from/to router
+    }
+
+    // Mark that this contract can safely receive ERC-3525 tokens
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return
+            interfaceId == type(IERC3525Receiver).interfaceId ||
+            super.supportsInterface(interfaceId);
+    }
+
+    // Hook for received ERC-3525 tokens, must exist along with supportsInterface
+    function onERC3525Received(
+        address operator_,
+        uint256 fromTokenId_,
+        uint256 toTokenId_,
+        uint256 value_,
+        bytes calldata data_
+    ) external pure override returns (bytes4) {
+        return IERC3525Receiver.onERC3525Received.selector;
     }
 
     function _buildPoolKeyFromSlotAndSwapToken(

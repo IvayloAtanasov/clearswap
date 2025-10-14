@@ -29,7 +29,7 @@ contract TestWrapAndSwap is SetupTest {
     uint256 public invoiceTokenId;
     InvoiceTokenRouter public invoiceTokenRouter;
 
-    uint256 public eurAmountOwned = 1000000000; // 1000 EURT
+    uint256 public eurAmountOwned = 5_000_000_000; // 5000 EURT
 
     function setUp() public {
         // make msg sender 0x1
@@ -145,8 +145,10 @@ contract TestWrapAndSwap is SetupTest {
         );
 
         // Check pool balances or LP token balances
+        assertEq(invoiceTokenWrapper.balanceOf(address(0x1)), 4_380_000_000);
+        assertEq(eurTestToken.balanceOf(address(0x1)), 5_000_000_000);
 
-        assertEq(uint256(1 + 1), uint256(2), "Sanity check after providing liquidity");
+        assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 4_380_000_000);
     }
 
     // 1.
@@ -165,9 +167,9 @@ contract TestWrapAndSwap is SetupTest {
     // unwrap ERC-20 into ERC-3525
 
 
-    function testRemoveLiquidity() public {
-        // TODO:
-    }
+    // function testRemoveLiquidity() public {
+    //     // TODO:
+    // }
 
     // function testSellInvoiceForToken() public {
     //     // 1. Initialize the pool between invoice wrapper and EUR token
@@ -228,10 +230,10 @@ contract TestWrapAndSwap is SetupTest {
     //     console.log("Invoice tokens spent:", invoiceSpent);
     // }
 
-    function testSellTokenForInvoice() public {
-        // TODO:
-        // TODO: approval for the swap token to be spend by the rotuer
-    }
+    // function testSellTokenForInvoice() public {
+    //     // TODO:
+    //     // TODO: approval for the swap token to be spend by the rotuer
+    // }
 
     function deployInvoiceSlotAndToken(address mintAddress) private returns (InvoiceToken, uint256, uint256) {
         InvoiceToken _invoiceToken = new InvoiceToken();

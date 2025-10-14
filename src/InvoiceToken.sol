@@ -85,6 +85,8 @@ contract InvoiceToken is ERC3525, Owned {
         for (uint256 i = 0; i < tokenCount; i++) {
             uint256 tokenId = tokenOfOwnerByIndex(owner, i);
             if (slotOf(tokenId) == slot) {
+                // Note: balanceOf(tokenId) returns balance of all tokens in emission for this id,
+                // as a given tokenId can be owned by one user at a time
                 totalValue += balanceOf(tokenId); // Token value
             }
         }
