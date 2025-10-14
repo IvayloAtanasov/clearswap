@@ -17,14 +17,19 @@ import {IHooks} from "lib/v4-periphery/lib/v4-core/src/interfaces/IHooks.sol";
 import {InvoiceToken} from "./InvoiceToken.sol";
 import {Strings} from "lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 import {ERC165} from "lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol";
+import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
+import {IERC3525Receiver} from "lib/erc-3525/contracts/IERC3525Receiver.sol";
+import {ActionConstants} from "lib/v4-periphery/src/libraries/ActionConstants.sol";
+import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {InvoiceTokenWrapper} from "./InvoiceTokenWrapper.sol";
 import {Utils} from "./Utils.sol";
-import {IERC3525Receiver} from "lib/erc-3525/contracts/IERC3525Receiver.sol";
 
 contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     IPoolManager public immutable poolManager;
     IPositionManager public immutable positionManager;
     IStateView public immutable stateView;
+    IPermit2 public immutable permit2;
     InvoiceToken public immutable invoiceToken;
     IHooks public immutable hook;
 
@@ -46,12 +51,14 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         address poolManagerAddress,
         address positionManagerAddress,
         address stateViewAddress,
+        address permit2Address,
         address invoiceTokenAddress,
         address hookAddress
     ) {
         poolManager = IPoolManager(poolManagerAddress);
         positionManager = IPositionManager(positionManagerAddress);
         stateView = IStateView(stateViewAddress);
+        permit2 = IPermit2(permit2Address);
         invoiceToken = InvoiceToken(invoiceTokenAddress); // TODO: use interface
         hook = IHooks(hookAddress);
     }
@@ -113,7 +120,33 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         // lock invoice tokens in router for wrapper tokens
         invoiceToken.transferFrom(tokenId, address(this), invoiceTokenAmount);
         InvoiceTokenWrapper wrapperToken = InvoiceTokenWrapper(slotToWrapper[slotId]);
-        wrapperToken.mint(msg.sender, invoiceTokenAmount);
+        // pool tokens to settle here in router
+        // Note: alternative
+        // 1. user approves position manager through permit2 to spend tokens
+        // 2. router transfers directly to position manager
+        // 3. router adds 2 SETTLE and 2 SWEEP actions so position manager knows where to look tokens from
+        // and return leftovers to user
+        //
+        // instead we use router as intermediary for settling tokens
+        // pool manager would look them up from here
+        // Note: this is more simple in terms of actions, but less gas efficient
+        // also leftovers remain here, which is not cool
+        wrapperToken.mint(address(this), invoiceTokenAmount);
+        wrapperToken.approve(address(permit2), invoiceTokenAmount);
+        permit2.approve(
+            address(wrapperToken),
+            address(positionManager),
+            uint160(invoiceTokenAmount), // Note: potential conversion issue here
+            type(uint48).max // max deadline
+        );
+        IERC20(swapTokenAddress).transferFrom(msg.sender, address(this), swapTokenAmount);
+        IERC20(swapTokenAddress).approve(address(permit2), swapTokenAmount);
+        permit2.approve(
+            swapTokenAddress,
+            address(positionManager),
+            uint160(swapTokenAmount), // Note: potential conversion issue here
+            type(uint48).max // max deadline
+        );
 
         // build pool key
         PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
@@ -164,17 +197,21 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
             poolKey.currency1
         );
 
+        uint256 expectedTokenId = positionManager.nextTokenId();
+
         // ENCODE COMMANDS
         bytes memory unlockData = abi.encode(
             actions,
             params
         );
         // EXECUTE
-        // TODO: allowance expired?
-        // positionManager.modifyLiquidities(
-        //     unlockData,
-        //     block.timestamp + 60  // 60 second deadline
-        // );
+        positionManager.modifyLiquidities(
+            unlockData,
+            block.timestamp + 60  // 60 second deadline
+        );
+
+        // Transfer the NFT that was just minted (expectedTokenId)
+        IERC721(address(positionManager)).transferFrom(address(this), msg.sender, expectedTokenId);
     }
 
     function removeLiquidity(
@@ -244,7 +281,7 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
             data.hookData
         );
 
-        // TODO: settle invoce tokens from/to router
+        // TODO: settle invoce tokens from/to router after swap?
     }
 
     // Mark that this contract can safely receive ERC-3525 tokens

@@ -13,6 +13,7 @@ import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
+import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {InvoiceToken} from "../src/InvoiceToken.sol";
 import {InvoiceTokenWrapper} from "../src/InvoiceTokenWrapper.sol";
 import "forge-std/console.sol";
@@ -50,6 +51,7 @@ contract TestWrapAndSwap is SetupTest {
             address(poolManager),
             address(positionManager),
             address(stateView),
+            address(permit2),
             address(invoiceToken),
             Constants.ADDRESS_ZERO // TODO: use hook
         );
@@ -117,22 +119,25 @@ contract TestWrapAndSwap is SetupTest {
         // Approvals
         // - router as spender for tester 3525 invoice tokens
         invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
-        // - permit2 as spender for tester ERC20 pair
-        eurTestToken.approve(address(permit2), 4_380_000_000);
-        invoiceTokenWrapper.approve(address(permit2), 4_380_000_000);
-        // - position manager as spender for permit2 ERC20 pair (provide/remove liquidity)
-        permit2.approve(
-            address(eurTestToken),
-            address(positionManager),
-            4_380_000_000,
-            type(uint48).max // max deadline
-        );
-        permit2.approve(
-            invoiceTokenWrapperAddress,
-            address(positionManager),
-            4_380_000_000,
-            type(uint48).max // max deadline
-        );
+        // Note: alternative if router transfers tokens directly to pool manager
+        // // - permit2 as spender for tester ERC20 pair
+        // eurTestToken.approve(address(permit2), 4_380_000_000);
+        // invoiceTokenWrapper.approve(address(permit2), 4_380_000_000);
+        // // - position manager as spender for permit2 ERC20 pair (provide/remove liquidity)
+        // permit2.approve(
+        //     address(eurTestToken),
+        //     address(positionManager),
+        //     4_380_000_000,
+        //     type(uint48).max // max deadline
+        // );
+        // permit2.approve(
+        //     invoiceTokenWrapperAddress,
+        //     address(positionManager),
+        //     4_380_000_000,
+        //     type(uint48).max // max deadline
+        // );
+        eurTestToken.approve(address(invoiceTokenRouter), 4_380_000_000);
+        invoiceTokenWrapper.approve(address(invoiceTokenRouter), 4_380_000_000);
 
         // Provide liquidity to the pool
         // add all invoice tokens owned for that much eur in 1:1 ratio
@@ -145,10 +150,20 @@ contract TestWrapAndSwap is SetupTest {
         );
 
         // Check pool balances or LP token balances
-        assertEq(invoiceTokenWrapper.balanceOf(address(0x1)), 4_380_000_000);
-        assertEq(eurTestToken.balanceOf(address(0x1)), 5_000_000_000);
-
+        // - router pulled all invoice tokens from user (all in slot)
         assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 4_380_000_000);
+
+        // - pool manager (through position manager) pulled all invoice token wrappers from router
+        assertEq(invoiceTokenWrapper.balanceOf(address(0x1)), 0);
+        assertEq(invoiceTokenWrapper.balanceOf(address(poolManager)), 4_380_000_000);
+
+        // - pool manager (through position manager) pulled EUR tokens from test user
+        assertEq(eurTestToken.balanceOf(address(0x1)), 620_000_000);
+        assertEq(eurTestToken.balanceOf(address(poolManager)), 4_380_000_000);
+
+        // - user has position NFT
+        IERC721 positionNFT = IERC721(address(positionManager));
+        assertEq(positionNFT.balanceOf(address(0x1)), 1);
     }
 
     // 1.
