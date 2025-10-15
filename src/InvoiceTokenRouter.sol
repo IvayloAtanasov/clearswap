@@ -119,52 +119,42 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
 
         // lock invoice tokens in router for wrapper tokens
         invoiceToken.transferFrom(tokenId, address(this), invoiceTokenAmount);
+        // mint wrapper tokens directly to position manager
         InvoiceTokenWrapper wrapperToken = InvoiceTokenWrapper(slotToWrapper[slotId]);
-        // pool tokens to settle here in router
-        // Note: alternative
-        // 1. user approves position manager through permit2 to spend tokens
-        // 2. router transfers directly to position manager
-        // 3. router adds 2 SETTLE and 2 SWEEP actions so position manager knows where to look tokens from
-        // and return leftovers to user
-        //
-        // instead we use router as intermediary for settling tokens
-        // pool manager would look them up from here
-        // Note: this is more simple in terms of actions, but less gas efficient
-        // also leftovers remain here, which is not cool
-        wrapperToken.mint(address(this), invoiceTokenAmount);
-        wrapperToken.approve(address(permit2), invoiceTokenAmount);
-        permit2.approve(
-            address(wrapperToken),
-            address(positionManager),
-            uint160(invoiceTokenAmount), // Note: potential conversion issue here
-            type(uint48).max // max deadline
-        );
-        IERC20(swapTokenAddress).transferFrom(msg.sender, address(this), swapTokenAmount);
-        IERC20(swapTokenAddress).approve(address(permit2), swapTokenAmount);
-        permit2.approve(
-            swapTokenAddress,
+        wrapperToken.mint(address(positionManager), invoiceTokenAmount);
+        // transfer swap tokens from user to position manager via permit2
+        permit2.transferFrom(
+            msg.sender,
             address(positionManager),
             uint160(swapTokenAmount), // Note: potential conversion issue here
-            type(uint48).max // max deadline
+            swapTokenAddress
         );
 
         // build pool key
         PoolKey memory poolKey = _buildPoolKeyFromSlotAndSwapToken(slotId, swapTokenAddress);
 
         // 1. ACTIONS
-        // Note: actions conversion to 1 byte is missing from docs
+        // Note: actions conversion to 1 byte (uint8) is missing from docs
         // https://docs.uniswap.org/contracts/v4/guides/position-manager
         // but can be found in the tests
         // https://github.com/Uniswap/v4-periphery/blob/main/test/shared/Planner.sol#L32
         // and in this implementation
         // https://github.com/ScoutiFi-xyz/blockchain/blob/main/deploy/local/03-swap.ts#L106-L109
         bytes memory actions = abi.encodePacked(
+            // mint position for amount of liquidity calculated
             uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
+            // settle currency0 from PositionManager balance
+            uint8(Actions.SETTLE),
+            // settle currency1 from PositionManager balance
+            uint8(Actions.SETTLE),
+            // return leftover currency0 tokens to user
+            uint8(Actions.SWEEP),
+            // return leftover currency1 tokens to user
+            uint8(Actions.SWEEP)
         );
 
         // 2. ACTIONS PARAMS
-        bytes[] memory params = new bytes[](2);
+        bytes[] memory params = new bytes[](5);
 
         // 2.1. Parameters for MINT_POSITION
         (uint160 sqrtPriceX96,,,) = stateView.getSlot0(poolKey.toId());
@@ -191,11 +181,16 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
             hookData
         );
 
-        // 2.2. Parameters for SETTLE_PAIR - specify tokens to provide
-        params[1] = abi.encode(
-            poolKey.currency0,
-            poolKey.currency1
-        );
+        // 2.2. Parameters for SETTLE
+        // payerIsUser = false (use contract balance)
+        params[1] = abi.encode(poolKey.currency0, ActionConstants.OPEN_DELTA, false);
+        // 2.3. Parameters for SETTLE
+        params[2] = abi.encode(poolKey.currency1, ActionConstants.OPEN_DELTA, false);
+
+        // 2.4. Parameters for SWEEP
+        params[3] = abi.encode(poolKey.currency0, msg.sender);
+        // 2.5. Parameters for SWEEP
+        params[4] = abi.encode(poolKey.currency1, msg.sender);
 
         uint256 expectedTokenId = positionManager.nextTokenId();
 

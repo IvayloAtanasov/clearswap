@@ -119,25 +119,14 @@ contract TestWrapAndSwap is SetupTest {
         // Approvals
         // - router as spender for tester 3525 invoice tokens
         invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
-        // Note: alternative if router transfers tokens directly to pool manager
-        // // - permit2 as spender for tester ERC20 pair
-        // eurTestToken.approve(address(permit2), 4_380_000_000);
-        // invoiceTokenWrapper.approve(address(permit2), 4_380_000_000);
-        // // - position manager as spender for permit2 ERC20 pair (provide/remove liquidity)
-        // permit2.approve(
-        //     address(eurTestToken),
-        //     address(positionManager),
-        //     4_380_000_000,
-        //     type(uint48).max // max deadline
-        // );
-        // permit2.approve(
-        //     invoiceTokenWrapperAddress,
-        //     address(positionManager),
-        //     4_380_000_000,
-        //     type(uint48).max // max deadline
-        // );
-        eurTestToken.approve(address(invoiceTokenRouter), 4_380_000_000);
-        invoiceTokenWrapper.approve(address(invoiceTokenRouter), 4_380_000_000);
+        // - router as spender for ERC20 token through permit2
+        eurTestToken.approve(address(permit2), 4_380_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
 
         // Provide liquidity to the pool
         // add all invoice tokens owned for that much eur in 1:1 ratio
@@ -153,11 +142,11 @@ contract TestWrapAndSwap is SetupTest {
         // - router pulled all invoice tokens from user (all in slot)
         assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 4_380_000_000);
 
-        // - pool manager (through position manager) pulled all invoice token wrappers from router
+        // - invoice token wrappers [router -> position manager -> pool manager]
         assertEq(invoiceTokenWrapper.balanceOf(address(0x1)), 0);
         assertEq(invoiceTokenWrapper.balanceOf(address(poolManager)), 4_380_000_000);
 
-        // - pool manager (through position manager) pulled EUR tokens from test user
+        // - EUR tokens [user -> position manager -> pool manager]
         assertEq(eurTestToken.balanceOf(address(0x1)), 620_000_000);
         assertEq(eurTestToken.balanceOf(address(poolManager)), 4_380_000_000);
 
