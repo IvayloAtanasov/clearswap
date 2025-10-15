@@ -130,7 +130,7 @@ contract TestWrapAndSwap is SetupTest {
 
         // Provide liquidity to the pool
         // add all invoice tokens owned for that much eur in 1:1 ratio
-        invoiceTokenRouter.addLiquidity(
+        uint256 positionTokenId = invoiceTokenRouter.provideLiquidity(
             invoiceTokenId,
             address(eurTestToken),
             4_380_000_000,
@@ -152,7 +152,46 @@ contract TestWrapAndSwap is SetupTest {
 
         // - user has position NFT
         IERC721 positionNFT = IERC721(address(positionManager));
-        assertEq(positionNFT.balanceOf(address(0x1)), 1);
+        assertEq(positionNFT.balanceOf(address(0x1)), positionTokenId);
+    }
+
+    function testRemoveLiquidity() public {
+        invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
+
+        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+        eurTestToken.approve(address(permit2), 4_380_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
+
+        uint256 positionTokenId = invoiceTokenRouter.provideLiquidity(
+            invoiceTokenId,
+            address(eurTestToken),
+            4_380_000_000,
+            4_380_000_000,
+            Constants.ZERO_BYTES
+        );
+
+        // Approve router to spend position NFT
+        IERC721(address(positionManager)).approve(address(invoiceTokenRouter), positionTokenId);
+        // Remove liquidity and burn position NFT
+        invoiceTokenRouter.removeLiquidity(
+            positionTokenId,
+            0, // chosing to be lenient with amounts
+            0, // chosing to be lenient with amounts
+            Constants.ZERO_BYTES
+        );
+
+        // TODO: assert
+        // - user has invoice tokens, router does not (from this slot)
+        // - user has EUR tokens
+        // - user does not have position NFT
     }
 
     // 1.
@@ -169,11 +208,6 @@ contract TestWrapAndSwap is SetupTest {
     // call router swap
     // swap EUR into ERC-20
     // unwrap ERC-20 into ERC-3525
-
-
-    // function testRemoveLiquidity() public {
-    //     // TODO:
-    // }
 
     // function testSellInvoiceForToken() public {
     //     // 1. Initialize the pool between invoice wrapper and EUR token

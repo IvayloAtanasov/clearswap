@@ -21,6 +21,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {IERC3525Receiver} from "lib/erc-3525/contracts/IERC3525Receiver.sol";
 import {ActionConstants} from "lib/v4-periphery/src/libraries/ActionConstants.sol";
+import {PositionInfo} from "lib/v4-periphery/src/libraries/PositionInfoLibrary.sol";
 import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {InvoiceTokenWrapper} from "./InvoiceTokenWrapper.sol";
 import {Utils} from "./Utils.sol";
@@ -104,13 +105,13 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         return slotToWrapper[slot];
     }
 
-    function addLiquidity(
+    function provideLiquidity(
         uint256 tokenId,
         address swapTokenAddress,
         uint256 invoiceTokenAmount,
         uint256 swapTokenAmount,
         bytes calldata hookData
-    ) public {
+    ) public returns (uint256) {
         uint256 slotId = invoiceToken.slotOf(tokenId);
         require(
             slotToWrapper[slotId] != Constants.ADDRESS_ZERO,
@@ -135,11 +136,11 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
 
         // 1. ACTIONS
         // Note: actions conversion to 1 byte (uint8) is missing from docs
-        // https://docs.uniswap.org/contracts/v4/guides/position-manager
-        // but can be found in the tests
-        // https://github.com/Uniswap/v4-periphery/blob/main/test/shared/Planner.sol#L32
-        // and in this implementation
-        // https://github.com/ScoutiFi-xyz/blockchain/blob/main/deploy/local/03-swap.ts#L106-L109
+        //   https://docs.uniswap.org/contracts/v4/guides/position-manager
+        //   but can be found in the tests
+        //     https://github.com/Uniswap/v4-periphery/blob/main/test/shared/Planner.sol#L32
+        //   and in this implementation
+        //     https://github.com/ScoutiFi-xyz/blockchain/blob/main/deploy/local/03-swap.ts#L106-L109
         bytes memory actions = abi.encodePacked(
             // mint position for amount of liquidity calculated
             uint8(Actions.MINT_POSITION),
@@ -207,15 +208,53 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
 
         // Transfer the NFT that was just minted (expectedTokenId)
         IERC721(address(positionManager)).transferFrom(address(this), msg.sender, expectedTokenId);
+
+        return expectedTokenId;
     }
 
     function removeLiquidity(
-        uint256 slotId,
-        address swapTokenAddress,
-        uint256 amount,
+        uint256 positionTokenId,
+        uint128 amount0Min,
+        uint128 amount1Min,
         bytes calldata hookData
     ) public {
+        // 1. Get position info to determine tokens
+        (PoolKey memory poolKey, PositionInfo info) = positionManager.getPoolAndPositionInfo(positionTokenId);
+
+        // 2. Transfer position NFT from user to router
+        IERC721(address(positionManager)).transferFrom(msg.sender, address(this), positionTokenId);
+
+        // 3. Build actions: BURN_POSITION + TAKE_PAIR
+        bytes memory actions = abi.encodePacked(
+            uint8(Actions.BURN_POSITION),
+            uint8(Actions.TAKE_PAIR)
+        );
+
+        bytes[] memory params = new bytes[](2);
+
+        // BURN_POSITION params
+        params[0] = abi.encode(
+            positionTokenId,
+            amount0Min,
+            amount1Min,
+            hookData
+        );
+
+        // TAKE_PAIR params - take both tokens to router
+        params[1] = abi.encode(
+            poolKey.currency0,
+            poolKey.currency1,
+            address(this)  // recipient = router
+        );
+
+        // 4. Execute - this burns NFT and gives us the tokens
+        bytes memory unlockData = abi.encode(actions, params);
+        positionManager.modifyLiquidities(unlockData, block.timestamp + 60);
+
         // TODO:
+        // burn wrapper tokens
+        // send invoice tokens to user
+        // send swap tokens to user
     }
 
     // swap for invoice token pools, created by this router
