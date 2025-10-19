@@ -15,7 +15,6 @@ import {Currency} from "lib/v4-periphery/lib/v4-core/src/types/Currency.sol";
 import {Constants} from "lib/v4-periphery/lib/v4-core/test/utils/Constants.sol";
 import {IHooks} from "lib/v4-periphery/lib/v4-core/src/interfaces/IHooks.sol";
 import {InvoiceToken} from "./InvoiceToken.sol";
-import {Strings} from "lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 import {ERC165} from "lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
@@ -72,12 +71,8 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     ) public returns (PoolKey memory) {
         // create wrapper for this slot if not exists
         if (slotToWrapper[slotId] == Constants.ADDRESS_ZERO) {
-            string memory slotWrapperName = string(
-                abi.encodePacked("Invoice ", Strings.toString(slotId))
-            );
             InvoiceTokenWrapper invoiceTokenWrapper = new InvoiceTokenWrapper(
-                "Invoice Token Wrapper",
-                slotWrapperName,
+                slotId,
                 6,
                 address(this)
             );
@@ -266,15 +261,18 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         int256 wrapperTokenDelta = SafeCast.toInt256(wrapperTokenBalanceAfter - wrapperTokenBalanceBefore);
         int256 swapTokenDelta = SafeCast.toInt256(swapTokenBalanceAfter - swapTokenBalanceBefore);
 
-        // burn wrapper tokens
         if (wrapperTokenDelta > 0) {
-            InvoiceTokenWrapper(wrapperTokenAddress).burn(address(this), uint256(wrapperTokenDelta));
-        }
-        // send invoice tokens to user
-        // TODO: transfer needs tokenId -> infer from wrapper address?
+            // burn wrapper tokens
+            InvoiceTokenWrapper wrapperToken = InvoiceTokenWrapper(wrapperTokenAddress);
+            wrapperToken.burn(address(this), uint256(wrapperTokenDelta));
 
-        // send swap tokens to user
+            // send invoice tokens to user (could be fractioned over multiple tokenIds)
+            uint256 invoiceSlotId = wrapperToken.invoiceSlotId();
+            invoiceToken.transferSlot(invoiceSlotId, msg.sender, uint256(wrapperTokenDelta));
+        }
+
         if (swapTokenDelta > 0) {
+            // send swap tokens to user
             IERC20(swapTokenAddress).transfer(msg.sender, uint256(swapTokenDelta));
         }
     }

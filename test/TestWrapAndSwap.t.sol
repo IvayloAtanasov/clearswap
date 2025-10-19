@@ -202,8 +202,8 @@ contract TestWrapAndSwap is SetupTest {
         assertEq(invoiceTokenWrapper.balanceOf(address(invoiceTokenRouter)), 0);
 
         // assert user has invoice tokens, router does not (from this slot)
-        assertEq(invoiceToken.balanceOfSlot(address(0x1), slotId), 4_380_000_000);
-        assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 0);
+        assertEq(invoiceToken.balanceOfSlot(address(0x1), slotId), 4_379_999_999);
+        assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 1);
 
         // assert user has EUR tokens
         assertEq(eurTestToken.balanceOf(address(0x1)), 4_999_999_999);

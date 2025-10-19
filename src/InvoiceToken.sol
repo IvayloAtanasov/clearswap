@@ -79,6 +79,22 @@ contract InvoiceToken is ERC3525, Owned {
         return string(abi.encodePacked("ipfs://", ipfsCid));
     }
 
+    // override transfer between token ids
+    // in order to ensure tokenId (many) >- ipfs document (one) relation is always kept
+    function transferFrom(
+        uint256 fromTokenId_,
+        uint256 toTokenId_,
+        uint256 value_
+    ) public payable virtual override {
+        require(
+            keccak256(bytes(tokenToIPFS[toTokenId_])) == keccak256(bytes(tokenToIPFS[fromTokenId_])),
+            "InvoiceToken: IPFS CID mismatch"
+        );
+
+        _spendAllowance(_msgSender(), fromTokenId_, value_);
+        _transferValue(fromTokenId_, toTokenId_, value_);
+    }
+
     function balanceOfSlot(address owner, uint256 slot) external view returns (uint256 totalValue) {
         uint256 tokenCount = balanceOf(owner); // Number of tokens
 
@@ -94,20 +110,32 @@ contract InvoiceToken is ERC3525, Owned {
         return totalValue;
     }
 
-    // override transfer between token ids
-    // in order to ensure tokenId (many) >- ipfs document (one) relation is always kept
-    function transferFrom(
-        uint256 fromTokenId_,
-        uint256 toTokenId_,
-        uint256 value_
-    ) public payable virtual override {
-        require(
-            keccak256(bytes(tokenToIPFS[toTokenId_])) == keccak256(bytes(tokenToIPFS[fromTokenId_])),
-            "InvoiceToken: IPFS CID mismatch"
-        );
+    function transferSlot(uint256 slot, address to, uint256 value) external {
+        uint256 tokenCount = balanceOf(msg.sender);
 
-        _spendAllowance(_msgSender(), fromTokenId_, value_);
-        _transferValue(fromTokenId_, toTokenId_, value_);
+        // iterate over all owned tokens for this slot
+        // transfer until asked value is filled
+        // revert if asked value cannot be filled in full
+        uint256 remainingToFill = value;
+        for (uint256 i = 0; i < tokenCount; i++) {
+            uint256 tokenId = tokenOfOwnerByIndex(msg.sender, i);
+            if (slotOf(tokenId) == slot) {
+                uint256 ballance = balanceOf(tokenId);
+                if (ballance == 0) {
+                    continue;
+                }
+
+                if (ballance >= remainingToFill) {
+                    transferFrom(tokenId, to, remainingToFill);
+                    return;
+                } else {
+                    transferFrom(tokenId, to, ballance);
+                    remainingToFill -= ballance;
+                }
+            }
+        }
+
+        revert("InvoiceToken: Insufficient balance");
     }
 
     function _createDerivedTokenId(uint256 fromTokenId) internal override returns (uint256) {
