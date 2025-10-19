@@ -19,12 +19,14 @@ import {Strings} from "lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 import {ERC165} from "lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
+import {SafeCast} from "lib/openzeppelin-contracts/contracts/utils/math/SafeCast.sol";
 import {IERC3525Receiver} from "lib/erc-3525/contracts/IERC3525Receiver.sol";
 import {ActionConstants} from "lib/v4-periphery/src/libraries/ActionConstants.sol";
 import {PositionInfo} from "lib/v4-periphery/src/libraries/PositionInfoLibrary.sol";
 import {IPermit2} from "lib/permit2/src/interfaces/IPermit2.sol";
 import {InvoiceTokenWrapper} from "./InvoiceTokenWrapper.sol";
 import {Utils} from "./Utils.sol";
+import {console} from "forge-std/console.sol";
 
 contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     IPoolManager public immutable poolManager;
@@ -193,7 +195,7 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         // 2.5. Parameters for SWEEP
         params[4] = abi.encode(poolKey.currency1, msg.sender);
 
-        uint256 expectedTokenId = positionManager.nextTokenId();
+        uint256 expectedPositionTokenId = positionManager.nextTokenId();
 
         // ENCODE COMMANDS
         bytes memory unlockData = abi.encode(
@@ -205,11 +207,10 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
             unlockData,
             block.timestamp + 60  // 60 second deadline
         );
+        // Transfer the NFT that was just minted (expectedPositionTokenId)
+        IERC721(address(positionManager)).transferFrom(address(this), msg.sender, expectedPositionTokenId);
 
-        // Transfer the NFT that was just minted (expectedTokenId)
-        IERC721(address(positionManager)).transferFrom(address(this), msg.sender, expectedTokenId);
-
-        return expectedTokenId;
+        return expectedPositionTokenId;
     }
 
     function removeLiquidity(
@@ -219,7 +220,14 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         bytes calldata hookData
     ) public {
         // 1. Get position info to determine tokens
-        (PoolKey memory poolKey, PositionInfo info) = positionManager.getPoolAndPositionInfo(positionTokenId);
+        (PoolKey memory poolKey, ) = positionManager.getPoolAndPositionInfo(positionTokenId);
+
+        // determine wrapper and swap token balances before execution
+        bool currency0IsWrapper = _isWrapperToken(Currency.unwrap(poolKey.currency0));
+        address wrapperTokenAddress = currency0IsWrapper ? Currency.unwrap(poolKey.currency0) : Currency.unwrap(poolKey.currency1);
+        address swapTokenAddress = currency0IsWrapper ? Currency.unwrap(poolKey.currency1) : Currency.unwrap(poolKey.currency0);
+        uint256 wrapperTokenBalanceBefore = IERC20(wrapperTokenAddress).balanceOf(address(this));
+        uint256 swapTokenBalanceBefore = IERC20(swapTokenAddress).balanceOf(address(this));
 
         // 2. Transfer position NFT from user to router
         IERC721(address(positionManager)).transferFrom(msg.sender, address(this), positionTokenId);
@@ -251,10 +259,24 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         bytes memory unlockData = abi.encode(actions, params);
         positionManager.modifyLiquidities(unlockData, block.timestamp + 60);
 
-        // TODO:
+        // determine token deltas after execution
+        uint256 wrapperTokenBalanceAfter = IERC20(wrapperTokenAddress).balanceOf(address(this));
+        uint256 swapTokenBalanceAfter = IERC20(swapTokenAddress).balanceOf(address(this));
+        // Note: explicit conversion to int256 to avoid corner case overflows
+        int256 wrapperTokenDelta = SafeCast.toInt256(wrapperTokenBalanceAfter - wrapperTokenBalanceBefore);
+        int256 swapTokenDelta = SafeCast.toInt256(swapTokenBalanceAfter - swapTokenBalanceBefore);
+
         // burn wrapper tokens
+        if (wrapperTokenDelta > 0) {
+            InvoiceTokenWrapper(wrapperTokenAddress).burn(address(this), uint256(wrapperTokenDelta));
+        }
         // send invoice tokens to user
+        // TODO: transfer needs tokenId -> infer from wrapper address?
+
         // send swap tokens to user
+        if (swapTokenDelta > 0) {
+            IERC20(swapTokenAddress).transfer(msg.sender, uint256(swapTokenDelta));
+        }
     }
 
     // swap for invoice token pools, created by this router
@@ -327,11 +349,11 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
 
     // Hook for received ERC-3525 tokens, must exist along with supportsInterface
     function onERC3525Received(
-        address operator_,
-        uint256 fromTokenId_,
-        uint256 toTokenId_,
-        uint256 value_,
-        bytes calldata data_
+        address /*operator_*/,
+        uint256 /*fromTokenId_*/,
+        uint256 /*toTokenId_*/,
+        uint256 /*value_*/,
+        bytes calldata /*data_*/
     ) external pure override returns (bytes4) {
         return IERC3525Receiver.onERC3525Received.selector;
     }
@@ -362,6 +384,16 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         );
 
         return poolKey;
+    }
+
+    function _isWrapperToken(address tokenAddress) private view returns (bool) {
+        try InvoiceTokenWrapper(tokenAddress).owner() returns (address owner) {
+            // If this succeeds and owner is our router, it's our wrapper
+            return owner == address(this);
+        } catch {
+            // If this fails, it's not our wrapper token
+            return false;
+        }
     }
 
     function _unlock(

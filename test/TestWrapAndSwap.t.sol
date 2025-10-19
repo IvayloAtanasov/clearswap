@@ -188,10 +188,28 @@ contract TestWrapAndSwap is SetupTest {
             Constants.ZERO_BYTES
         );
 
-        // TODO: assert
-        // - user has invoice tokens, router does not (from this slot)
-        // - user has EUR tokens
-        // - user does not have position NFT
+        // assert user does not have position NFT
+        IERC721 positionNFT = IERC721(address(positionManager));
+        assertEq(positionNFT.balanceOf(address(0x1)), 0);
+
+        // assert wrapper tokens burned
+        address invoiceTokenWrapperAddress = invoiceTokenRouter.getWrapperAddress(invoiceTokenId);
+        InvoiceTokenWrapper invoiceTokenWrapper = InvoiceTokenWrapper(invoiceTokenWrapperAddress);
+        assertEq(invoiceTokenWrapper.balanceOf(address(0x1)), 0);
+        assertEq(invoiceTokenWrapper.balanceOf(address(positionManager)), 0);
+        // Note: 1 dust token left in pool manager due to rounding
+        assertEq(invoiceTokenWrapper.balanceOf(address(poolManager)), 1);
+        assertEq(invoiceTokenWrapper.balanceOf(address(invoiceTokenRouter)), 0);
+
+        // assert user has invoice tokens, router does not (from this slot)
+        assertEq(invoiceToken.balanceOfSlot(address(0x1), slotId), 4_380_000_000);
+        assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 0);
+
+        // assert user has EUR tokens
+        assertEq(eurTestToken.balanceOf(address(0x1)), 4_999_999_999);
+        assertEq(eurTestToken.balanceOf(address(positionManager)), 0);
+        assertEq(eurTestToken.balanceOf(address(poolManager)), 1);
+        assertEq(eurTestToken.balanceOf(address(invoiceTokenRouter)), 0);
     }
 
     // 1.
