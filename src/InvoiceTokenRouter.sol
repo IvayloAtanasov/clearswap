@@ -407,6 +407,11 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     function _takeFromPoolAndGiveToSwapper(Currency currency, address swapper, uint256 amount) internal {
         // Take tokens from pool to router
         poolManager.take(currency, address(this), amount);
+        // pool manager actual delta must be manually cleared after take
+        int256 actualDelta = poolManager.currencyDelta(address(this), currency);
+        if (actualDelta > 0) {
+            poolManager.clear(currency, uint256(actualDelta));
+        }
 
         // Transfer to swapper
         address token = Currency.unwrap(currency);
@@ -450,12 +455,12 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     /**
      * Router callback
      */
-    function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
+    function unlockCallback(bytes calldata rawData) external returns (bytes memory) {
         require(msg.sender == address(poolManager));
 
         CallbackData memory data = abi.decode(rawData, (CallbackData));
 
-        return _swap(
+        int128 reciprocalAmount = _swap(
             data.poolKey,
             data.params.zeroForOne,
             data.params.amountSpecified,
@@ -464,6 +469,8 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         );
 
         _settleDeltas(data.poolKey, data.sender);
+
+        return abi.encode(reciprocalAmount);
     }
 
     /**

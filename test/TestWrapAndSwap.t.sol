@@ -239,7 +239,14 @@ contract TestWrapAndSwap is SetupTest {
         eurTestToken.transfer(tester2Address, 500_000_000); // 500 EURT
 
         vm.startPrank(tester2Address);
-        // TODO: wont work without permissions
+        eurTestToken.approve(address(permit2), 500_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            500_000_000,
+            type(uint48).max // max deadline
+        );
+
         invoiceTokenRouter.swapInvoice(
             slotId,
             address(eurTestToken),
