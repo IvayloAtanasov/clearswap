@@ -110,15 +110,15 @@ contract InvoiceToken is ERC3525, Owned {
         return totalValue;
     }
 
-    function transferSlot(uint256 slot, address to, uint256 value) external {
-        uint256 tokenCount = balanceOf(msg.sender);
+    function transferSlot(uint256 slot, address from, address to, uint256 value) external {
+        uint256 tokenCount = balanceOf(from);
 
         // iterate over all owned tokens for this slot
         // transfer until asked value is filled
         // revert if asked value cannot be filled in full
         uint256 remainingToFill = value;
         for (uint256 i = 0; i < tokenCount; i++) {
-            uint256 tokenId = tokenOfOwnerByIndex(msg.sender, i);
+            uint256 tokenId = tokenOfOwnerByIndex(from, i);
             if (slotOf(tokenId) == slot) {
                 uint256 ballance = balanceOf(tokenId);
                 if (ballance == 0) {

@@ -212,6 +212,44 @@ contract TestWrapAndSwap is SetupTest {
         assertEq(eurTestToken.balanceOf(address(invoiceTokenRouter)), 0);
     }
 
+    function testBuy() public {
+        // default tester user provides max liquidity
+        invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
+        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+        eurTestToken.approve(address(permit2), 4_380_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
+        uint256 positionTokenId = invoiceTokenRouter.provideLiquidity(
+            invoiceTokenId,
+            address(eurTestToken),
+            4_380_000_000,
+            4_380_000_000,
+            Constants.ZERO_BYTES
+        );
+
+        address tester2Address = address(0x2);
+        // default user transfers some EURT to tester2
+        eurTestToken.transfer(tester2Address, 500_000_000); // 500 EURT
+
+        vm.startPrank(tester2Address);
+        // TODO: wont work without permissions
+        invoiceTokenRouter.swapInvoice(
+            slotId,
+            address(eurTestToken),
+            false,
+            200_000_000,
+            Constants.ZERO_BYTES
+        );
+        vm.stopPrank();
+    }
+
     // 1.
     // provide ERC-3525 liquidity
     // wrap ERC-3525 into ERC-20
@@ -287,8 +325,6 @@ contract TestWrapAndSwap is SetupTest {
     // }
 
     // function testSellTokenForInvoice() public {
-    //     // TODO:
-    //     // TODO: approval for the swap token to be spend by the rotuer
     // }
 
     function deployInvoiceSlotAndToken(address mintAddress) private returns (InvoiceToken, uint256, uint256) {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import {IPoolManager} from "lib/v4-periphery/lib/v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager.sol";
+import {TransientStateLibrary} from "lib/v4-periphery/lib/v4-core/src/libraries/TransientStateLibrary.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 import {Actions} from "lib/v4-periphery/src/libraries/Actions.sol";
 import {LiquidityAmounts} from "lib/v4-periphery/src/libraries/LiquidityAmounts.sol";
@@ -28,6 +29,9 @@ import {Utils} from "./Utils.sol";
 import {console} from "forge-std/console.sol";
 
 contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
+    // allows for using currencyDelta from pool manager
+    using TransientStateLibrary for IPoolManager;
+
     IPoolManager public immutable poolManager;
     IPositionManager public immutable positionManager;
     IStateView public immutable stateView;
@@ -268,7 +272,7 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
 
             // send invoice tokens to user (could be fractioned over multiple tokenIds)
             uint256 invoiceSlotId = wrapperToken.invoiceSlotId();
-            invoiceToken.transferSlot(invoiceSlotId, msg.sender, uint256(wrapperTokenDelta));
+            invoiceToken.transferSlot(invoiceSlotId, address(this), msg.sender, uint256(wrapperTokenDelta));
         }
 
         if (swapTokenDelta > 0) {
@@ -322,40 +326,6 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         _unlock(poolKey, zeroForOne, amountSpecified, hookData);
     }
 
-    function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
-        require(msg.sender == address(poolManager));
-
-        CallbackData memory data = abi.decode(rawData, (CallbackData));
-
-        return _swap(
-            data.poolKey,
-            data.params.zeroForOne,
-            data.params.amountSpecified,
-            data.params.sqrtPriceLimitX96,
-            data.hookData
-        );
-
-        // TODO: settle invoce tokens from/to router after swap?
-    }
-
-    // Mark that this contract can safely receive ERC-3525 tokens
-    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
-        return
-            interfaceId == type(IERC3525Receiver).interfaceId ||
-            super.supportsInterface(interfaceId);
-    }
-
-    // Hook for received ERC-3525 tokens, must exist along with supportsInterface
-    function onERC3525Received(
-        address /*operator_*/,
-        uint256 /*fromTokenId_*/,
-        uint256 /*toTokenId_*/,
-        uint256 /*value_*/,
-        bytes calldata /*data_*/
-    ) external pure override returns (bytes4) {
-        return IERC3525Receiver.onERC3525Received.selector;
-    }
-
     function _buildPoolKeyFromSlotAndSwapToken(
         uint256 slotId,
         address swapTokenAddress
@@ -394,6 +364,133 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         }
     }
 
+    function _settleDeltas(PoolKey memory poolKey, address swapper) internal {
+        int256 delta0 = poolManager.currencyDelta(address(this), poolKey.currency0);
+        int256 delta1 = poolManager.currencyDelta(address(this), poolKey.currency1);
+
+        // Settle currency0
+        if (delta0 < 0) {
+            // We owe tokens to the pool - take from swapper and give to pool
+            uint256 amount = uint256(-delta0);
+            _takeFromSwapperAndSettle(poolKey.currency0, swapper, amount);
+        } else if (delta0 > 0) {
+            // Pool owes us tokens - take from pool and give to swapper
+            uint256 amount = uint256(delta0);
+            _takeFromPoolAndGiveToSwapper(poolKey.currency0, swapper, amount);
+        }
+
+        // Settle currency1
+        if (delta1 < 0) {
+            // We owe tokens to the pool
+            uint256 amount = uint256(-delta1);
+            _takeFromSwapperAndSettle(poolKey.currency1, swapper, amount);
+        } else if (delta1 > 0) {
+            // Pool owes us tokens
+            uint256 amount = uint256(delta1);
+            _takeFromPoolAndGiveToSwapper(poolKey.currency1, swapper, amount);
+        }
+    }
+
+    function _takeFromSwapperAndSettle(Currency currency, address swapper, uint256 amount) internal {
+        address token = Currency.unwrap(currency);
+
+        if (_isWrapperToken(token)) {
+            _handleWrapperTokenSettlement(token, swapper, amount);
+        } else {
+            // Regular ERC20 - use Permit2 to transfer from swapper to pool
+            permit2.transferFrom(swapper, address(poolManager), uint160(amount), token);
+        }
+
+        poolManager.settle();
+    }
+
+    function _takeFromPoolAndGiveToSwapper(Currency currency, address swapper, uint256 amount) internal {
+        // Take tokens from pool to router
+        poolManager.take(currency, address(this), amount);
+
+        // Transfer to swapper
+        address token = Currency.unwrap(currency);
+        if (_isWrapperToken(token)) {
+            _handleWrapperTokenTransfer(token, swapper, amount);
+        } else {
+            // Regular ERC20 transfer
+            IERC20(token).transfer(swapper, amount);
+        }
+    }
+
+    function _handleWrapperTokenSettlement(address wrapperToken, address swapper, uint256 amount) internal {
+        // For wrapper tokens, we need to:
+        // 1. Get ERC3525 tokens from swapper
+        // 2. Wrap them to ERC20
+        // 3. Send to pool
+
+        InvoiceTokenWrapper wrapper = InvoiceTokenWrapper(wrapperToken);
+        uint256 slotId = wrapper.invoiceSlotId();
+
+        // Transfer ERC3525 from swapper to router
+        invoiceToken.transferSlot(slotId, swapper, address(this), amount);
+
+        // Mint wrapper tokens and send to pool
+        wrapper.mint(address(poolManager), amount);
+    }
+
+    function _handleWrapperTokenTransfer(address wrapperToken, address swapper, uint256 amount) internal {
+        // For giving wrapper tokens to swapper:
+        // 1. Burn wrapper tokens
+        // 2. Transfer ERC3525 tokens to swapper
+
+        InvoiceTokenWrapper wrapper = InvoiceTokenWrapper(wrapperToken);
+        uint256 slotId = wrapper.invoiceSlotId();
+
+        wrapper.burn(address(this), amount);
+
+        invoiceToken.transferSlot(slotId, address(this), swapper, amount);
+    }
+
+    /**
+     * Router callback
+     */
+    function unlockCallback(bytes calldata rawData) external returns (int128 reciprocalAmount) {
+        require(msg.sender == address(poolManager));
+
+        CallbackData memory data = abi.decode(rawData, (CallbackData));
+
+        return _swap(
+            data.poolKey,
+            data.params.zeroForOne,
+            data.params.amountSpecified,
+            data.params.sqrtPriceLimitX96,
+            data.hookData
+        );
+
+        _settleDeltas(data.poolKey, data.sender);
+    }
+
+    /**
+     * Mark this contract can safely receive ERC-3525 tokens
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return
+            interfaceId == type(IERC3525Receiver).interfaceId ||
+            super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * Hook for received ERC-3525 tokens, must exist along with supportsInterface
+     */
+    function onERC3525Received(
+        address /*operator_*/,
+        uint256 /*fromTokenId_*/,
+        uint256 /*toTokenId_*/,
+        uint256 /*value_*/,
+        bytes calldata /*data_*/
+    ) external pure override returns (bytes4) {
+        return IERC3525Receiver.onERC3525Received.selector;
+    }
+
+    /**
+     * Router unlock
+     */
     function _unlock(
         PoolKey memory poolKey,
         bool zeroForOne,
@@ -415,6 +512,9 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         );
     }
 
+    /**
+     * Router swap
+     */
     function _swap(
         PoolKey memory poolKey,
         bool zeroForOne,
@@ -437,7 +537,7 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         }
     }
 
-    /// @notice Adjusts ticks to the nearest multiples of tickSpacing.
+    /// @notice Helper to adjust ticks to the nearest multiples of tickSpacing.
     /// @dev Returns the adjusted lower and upper ticks.
     /// @param tickLower The lower tick (can be negative).
     /// @param tickUpper The upper tick (can be negative).
