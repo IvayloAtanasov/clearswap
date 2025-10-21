@@ -392,6 +392,10 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     }
 
     function _takeFromSwapperAndSettle(Currency currency, address swapper, uint256 amount) internal {
+        // poolManager needs to know the currency we're going to transfer to it for settling the debt
+        // without explicitly syncing the currency .settle() won't clear the delta
+        poolManager.sync(currency);
+
         address token = Currency.unwrap(currency);
 
         if (_isWrapperToken(token)) {
@@ -407,11 +411,6 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
     function _takeFromPoolAndGiveToSwapper(Currency currency, address swapper, uint256 amount) internal {
         // Take tokens from pool to router
         poolManager.take(currency, address(this), amount);
-        // pool manager actual delta must be manually cleared after take
-        int256 actualDelta = poolManager.currencyDelta(address(this), currency);
-        if (actualDelta > 0) {
-            poolManager.clear(currency, uint256(actualDelta));
-        }
 
         // Transfer to swapper
         address token = Currency.unwrap(currency);

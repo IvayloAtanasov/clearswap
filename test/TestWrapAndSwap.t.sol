@@ -226,7 +226,7 @@ contract TestWrapAndSwap is SetupTest {
             4_380_000_000,
             type(uint48).max // max deadline
         );
-        uint256 positionTokenId = invoiceTokenRouter.provideLiquidity(
+        invoiceTokenRouter.provideLiquidity(
             invoiceTokenId,
             address(eurTestToken),
             4_380_000_000,
@@ -251,10 +251,28 @@ contract TestWrapAndSwap is SetupTest {
             slotId,
             address(eurTestToken),
             false,
-            200_000_000,
+            200_000_000, // 200 invoice tokens to buy
             Constants.ZERO_BYTES
         );
         vm.stopPrank();
+
+        // assert invoice tokens were unlocked from router and send to swapper
+        assertEq(invoiceToken.balanceOfSlot(address(invoiceTokenRouter), slotId), 4_180_000_000);
+        assertEq(invoiceToken.balanceOfSlot(tester2Address, slotId), 200_000_000);
+
+        // assert user spent swap tokens (EURT) 210_199_978 with slippage are needed
+        // to cover the asked invoice tokens
+        assertEq(eurTestToken.balanceOf(tester2Address), 289_800_022);
+
+        // assert pool manager balance changed
+        // - for invoice wrapper tokens
+        //   same as router balance of invoice tokens
+        address invoiceTokenWrapperAddress = invoiceTokenRouter.getWrapperAddress(invoiceTokenId);
+        InvoiceTokenWrapper invoiceTokenWrapper = InvoiceTokenWrapper(invoiceTokenWrapperAddress);
+        assertEq(invoiceTokenWrapper.balanceOf(address(poolManager)), 4_180_000_000);
+        // - for eur tokens
+        //   increased with amount sent from swapper
+        assertEq(eurTestToken.balanceOf(address(poolManager)), 4_590_199_978);
     }
 
     // 1.
