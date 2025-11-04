@@ -9,6 +9,7 @@ import {IPositionManager} from "lib/v4-periphery/src/interfaces/IPositionManager
 import {Hooks} from "lib/v4-periphery/lib/v4-core/src/libraries/Hooks.sol";
 import {IStateView} from "lib/v4-periphery/src/interfaces/IStateView.sol";
 import {HookMiner} from "lib/v4-periphery/src/utils/HookMiner.sol";
+import {Constants} from "lib/v4-periphery/lib/v4-core/test/utils/Constants.sol";
 import {IERC721} from "lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {InvoiceTokenRouter} from "../src/InvoiceTokenRouter.sol";
 import {InvoiceToken} from "../src/InvoiceToken.sol";
@@ -21,11 +22,6 @@ contract TestHook is SetupTest {
     IPoolManager public poolManager;
     IPositionManager public positionManager;
     IStateView public stateView;
-
-    MockERC20 public eurTestToken;
-    InvoiceToken public invoiceToken;
-    uint256 public slotId;
-    uint256 public invoiceTokenId;
     InvoiceTokenRouter public invoiceTokenRouter;
     InvoicePoolHook public invoicePoolHook;
 
@@ -44,24 +40,82 @@ contract TestHook is SetupTest {
         invoicePoolHook = deployInvoicePoolHook(address(poolManager));
     }
 
-    function testTokenExpirationSuccess() public {
-        eurTestToken = deployTestTokens(address(0x1), 1_000_000_000);
-        // (invoiceToken, slotId, invoiceTokenId) = deployInvoiceSlotAndToken(address(0x1));
+    function testTokenExpirationValidation() public {
+        MockERC20 eurTestToken = deployTestTokens(address(0x1), 10_000_000_000); // 10k EURT
 
-        // // contracts under test
-        // invoiceTokenRouter = new InvoiceTokenRouter(
-        //     address(poolManager),
-        //     address(positionManager),
-        //     address(stateView),
-        //     address(permit2),
-        //     address(invoiceToken),
-        //     address(invoicePoolHook)
-        // );
+        InvoiceToken invoiceToken = new InvoiceToken();
+        uint256 dueDate = block.timestamp + 1 days; // now + 1 day
+        uint8 riskProfile = 2; // moderate risk
+        uint256 slotId = invoiceToken.createSlot(dueDate, riskProfile);
+        string memory invoiceFileCid = "bafkreigq27kupea5z4dleffwb7bw4dddwlrstrbysc7qr3lrpn4c3yjilq";
+        uint256 tokenId = invoiceToken.mintInvoice(
+            address(0x1),
+            slotId,
+            4_380_000_000, // 4380 EUR
+            invoiceFileCid
+        );
 
-        // TODO
+        invoiceTokenRouter = new InvoiceTokenRouter(
+            address(poolManager),
+            address(positionManager),
+            address(stateView),
+            address(permit2),
+            address(invoiceToken),
+            address(invoicePoolHook)
+        );
+
+        vm.startPrank(address(0x1));
+        invoiceTokenRouter.initializeInvoicePool(
+            slotId,
+            address(eurTestToken)
+        );
+        invoiceToken.setApprovalForAll(address(invoiceTokenRouter), true);
+        eurTestToken.approve(address(permit2), 4_380_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            4_380_000_000,
+            type(uint48).max // max deadline
+        );
+        invoiceTokenRouter.provideLiquidity(
+            tokenId,
+            address(eurTestToken),
+            4_380_000_000,
+            4_380_000_000,
+            Constants.ZERO_BYTES
+        );
+
+        // approvals
+        eurTestToken.approve(address(permit2), 500_000_000);
+        permit2.approve(
+            address(eurTestToken),
+            address(invoiceTokenRouter),
+            500_000_000,
+            type(uint48).max // max deadline
+        );
+
+        // success
+        invoiceTokenRouter.swapInvoice(
+            slotId,
+            address(eurTestToken),
+            false,
+            100_000_000, // buy 100 invoice tokens
+            Constants.ZERO_BYTES
+        );
+        assertEq(invoiceToken.balanceOfSlot(address(0x1), slotId), 100_000_000);
+
+        // fail
+        vm.warp(dueDate + 1 days);
+        // expecting any revert, without specific selector as uniswap will wrap TokenExpired error into WrappedError
+        vm.expectRevert();
+        invoiceTokenRouter.swapInvoice(
+            slotId,
+            address(eurTestToken),
+            false,
+            100_000_000, // buy 100 invoice tokens
+            Constants.ZERO_BYTES
+        );
     }
-
-    function testTokenExpirationFail() public {}
 
     function deployInvoicePoolHook(address _poolManagerAddress) public returns (InvoicePoolHook) {
         // forge CREATE2 deployer proxy

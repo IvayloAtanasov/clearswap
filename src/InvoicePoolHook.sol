@@ -45,7 +45,7 @@ contract InvoicePoolHook is BaseHook {
     function _beforeSwap(
         address,
         PoolKey calldata key,
-        SwapParams calldata params,
+        SwapParams calldata, // params
         bytes calldata
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         _checkTokenExpiration(key.currency0);
