@@ -53,7 +53,7 @@ contract TestWrapAndSwap is SetupTest {
             address(stateView),
             address(permit2),
             address(invoiceToken),
-            Constants.ADDRESS_ZERO // TODO: use hook
+            Constants.ADDRESS_ZERO
         );
     }
 

@@ -76,6 +76,7 @@ contract InvoiceTokenRouter is ERC165, IERC3525Receiver {
         // create wrapper for this slot if not exists
         if (slotToWrapper[slotId] == Constants.ADDRESS_ZERO) {
             InvoiceTokenWrapper invoiceTokenWrapper = new InvoiceTokenWrapper(
+                address(invoiceToken),
                 slotId,
                 6,
                 address(this)

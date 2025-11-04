@@ -6,9 +6,11 @@ import {Owned} from "lib/solmate/src/auth/Owned.sol";
 import {Strings} from "lib/openzeppelin-contracts/contracts/utils/Strings.sol";
 
 contract InvoiceTokenWrapper is ERC20, Owned {
+    address public immutable invoiceTokenAddress;
     uint256 public immutable invoiceSlotId;
 
     constructor(
+        address invoiceToken,
         uint256 slotId,
         uint8 decimals,
         address owner
@@ -17,6 +19,7 @@ contract InvoiceTokenWrapper is ERC20, Owned {
         _constructSymbol(slotId),
         decimals
     ) Owned(owner) {
+        invoiceTokenAddress = invoiceToken;
         invoiceSlotId = slotId;
     }
 
